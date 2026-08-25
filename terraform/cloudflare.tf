@@ -11,6 +11,7 @@ resource "cloudflare_record" "api" {
 }
 
 resource "cloudflare_healthcheck" "api" {
+  count   = var.enable_healthcheck ? 1 : 0
   zone_id = var.cloudflare_zone_id
   name    = "carshare-api"
   address = var.domain

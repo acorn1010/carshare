@@ -107,6 +107,24 @@ variable "r2_secret_access_key" {
   sensitive   = true
 }
 
+variable "image_pull_secret" {
+  description = "Name of an existing dockerconfigjson secret in the namespace for private registries. Empty for public images."
+  type        = string
+  default     = ""
+}
+
+variable "enable_healthcheck" {
+  description = "Create the external Cloudflare health check. Needs a token with Healthchecks Edit."
+  type        = bool
+  default     = true
+}
+
+variable "enable_prometheus_rule" {
+  description = "Install the PrometheusRule alerts. Needs the prometheus-operator CRDs on the cluster."
+  type        = bool
+  default     = true
+}
+
 variable "min_replicas" {
   description = "HPA floor. Two keeps deploys and node drains invisible."
   type        = number

@@ -4,6 +4,7 @@
 # receivers, see the README's monitoring section.
 
 resource "kubernetes_manifest" "alerts" {
+  count = var.enable_prometheus_rule ? 1 : 0
   manifest = {
     apiVersion = "monitoring.coreos.com/v1"
     kind       = "PrometheusRule"

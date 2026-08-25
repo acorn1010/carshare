@@ -44,6 +44,12 @@ resource "kubernetes_deployment_v1" "carshare" {
       }
 
       spec {
+        dynamic "image_pull_secrets" {
+          for_each = var.image_pull_secret == "" ? [] : [var.image_pull_secret]
+          content {
+            name = image_pull_secrets.value
+          }
+        }
         container {
           name  = "carshare"
           image = "${var.image}:${var.image_tag}"
