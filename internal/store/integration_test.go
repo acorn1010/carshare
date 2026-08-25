@@ -514,6 +514,54 @@ func TestFractionalHourPricing(t *testing.T) {
 	}
 }
 
+// TestAvailabilityByPriceShortPageIsStillCorrect pins the accepted limit of the
+// price search: booking out the cheapest candidates shortens the page, and the
+// cars it does return are still the right ones in the right order.
+//
+// Ten of the twelve candidates (pageSize * priceCandidateFactor) are booked, so
+// two come back for a page of three. The 1300 car is free and cheaper than
+// anything on a later page, and it is still missed. That is the trade.
+func TestAvailabilityByPriceShortPageIsStillCorrect(t *testing.T) {
+	dataStore := newStore(t)
+	ctx := context.Background()
+	owner := newUser(t, dataStore, "price-owner")
+	renter := newUser(t, dataStore, "price-renter")
+	searchLat, searchLng := 37.7700, -122.4200
+	start := baseTime()
+
+	const carCount, bookedCount, pageSize = 20, 10, 3
+	cars := make([]store.Car, 0, carCount)
+	for index := range carCount {
+		cars = append(cars, newCar(t, dataStore, owner.ID, searchLat, searchLng+float64(index)*0.0001, 100+index*100))
+	}
+	for _, booked := range cars[:bookedCount] {
+		if _, err := dataStore.OrderCar(ctx, store.OrderParams{
+			CarID: booked.ID, BookerID: renter.ID, Kind: store.KindRental,
+			Start: start, End: start.Add(2 * time.Hour), MaxPrice: 1 << 30,
+		}); err != nil {
+			t.Fatalf("seed booking: %v", err)
+		}
+	}
+
+	page, err := dataStore.Availability(ctx, store.AvailabilityParams{
+		Lat: searchLat, Lng: searchLng, RangeMeters: 10_000,
+		Start: start, End: start.Add(2 * time.Hour),
+		Sort: "price", Limit: pageSize,
+	})
+	if err != nil {
+		t.Fatalf("availability by price: %v", err)
+	}
+	gotPrices := make([]int, 0, len(page))
+	for _, car := range page {
+		gotPrices = append(gotPrices, car.PricePerHour)
+	}
+	wantPrices := []int{1100, 1200}
+	if fmt.Sprint(gotPrices) != fmt.Sprint(wantPrices) {
+		t.Fatalf("page = %v, want %v: the free candidates, cheapest first, short of the %d asked for",
+			gotPrices, wantPrices, pageSize)
+	}
+}
+
 func TestAvailabilitySortingAndFilters(t *testing.T) {
 	dataStore := newStore(t)
 	ctx := context.Background()

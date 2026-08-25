@@ -515,12 +515,51 @@ const availabilityFilterSQL = `
 		      AND cars.recurrence_overlaps(rc.first_occurrence, rc.period, rc.timezone, tstzrange($5, $7))
 		  )`
 
-// availabilityByPriceSQL must rank every car in the circle before it knows
-// the cheapest, so its cost grows with circle density.
-const availabilityByPriceSQL = availabilityFilterSQL + `
-		  AND ` + distanceMetersSQL + ` <= $4
-		ORDER BY trip_price, distance_meters, c.id
+// availabilityByPriceCandidateSQL ranks the circle on price, then asks which of
+// the cheapest few are free. The anti-joins are the cost, not the ranking, and
+// the planner misjudges them badly: a GiST containment estimate is a fixed
+// guess (33 rows estimated against 49,670 measured), low enough that it picks a
+// nested loop rescanning the reservations once per car. Bounding the candidates
+// makes the row count small and known, so it hashes whatever the estimate says.
+//
+// Ranking is on price_per_hour, not on trip_price. Trip price is rounded for
+// display, which invents ties between rates that differ, and it is derived from
+// the trip length the search cache snapped to rather than the requested one.
+//
+// KNOWN LIMIT: a page can come back short of its limit when more than
+// priceCandidateFactor-1 in every priceCandidateFactor of the cheapest
+// candidates are booked. The cars it does return are always the right ones in
+// the right order, because candidates are ranked in page order.
+const availabilityByPriceCandidateSQL = `
+		WITH candidates AS MATERIALIZED (
+		  SELECT c.id, c.owner_id, c.model, c.model_year, c.location[1], c.location[0], c.price_per_hour, c.is_listed, c.created_at, c.updated_at,
+		         round(c.price_per_hour * $6::float8)::int AS trip_price,
+		         ` + distanceMetersSQL + ` AS distance_meters
+		  FROM cars.cars c
+		  WHERE c.is_listed
+		    AND c.location <@ circle(point($1, $2), $3)
+		    AND ` + distanceMetersSQL + ` <= $4
+		  ORDER BY c.price_per_hour, distance_meters, c.id
+		  LIMIT $10
+		)
+		SELECT * FROM candidates c
+		WHERE NOT EXISTS (
+		    SELECT 1 FROM cars.reservations r
+		    WHERE r.car_id = c.id AND r.status = 'confirmed'
+		      AND (r.hold_expires_at IS NULL OR r.hold_expires_at > now())
+		      AND r.during && tstzrange($5, $7)
+		  )
+		  AND NOT EXISTS (
+		    SELECT 1 FROM cars.recurrences rc
+		    WHERE rc.car_id = c.id AND rc.active
+		      AND cars.recurrence_overlaps(rc.first_occurrence, rc.period, rc.timezone, tstzrange($5, $7))
+		  )
+		ORDER BY c.price_per_hour, distance_meters, c.id
 		LIMIT $8 OFFSET $9`
+
+// priceCandidateFactor is how many cars the price search ranks per car it
+// returns. Raising it shortens pages less often and costs more sorting.
+const priceCandidateFactor = 4
 
 // availabilityByDistanceSQL streams candidates nearest-first out of the GiST
 // index and stops once the page is full, so dense cities cost the same as
@@ -578,20 +617,32 @@ func (store *Store) AvailabilityCount(ctx context.Context, params AvailabilityCo
 }
 
 // Availability lists cars free for the whole window. Sort "distance" (the
-// handler's default) walks the location index nearest-first and early-exits;
-// sort "price" ranks the whole circle cheapest-first. The GiST circle filter
-// is padded (longitude degrees shrink with latitude) and the exact meter
-// distance re-filters below it.
+// handler's default) walks the location index nearest-first and early-exits.
+// Sort "price" ranks a bounded set of candidates and can return a short page,
+// see availabilityByPriceCandidateSQL. The GiST circle filter is padded
+// (longitude degrees shrink with latitude) and the exact meter distance
+// re-filters below it.
 func (store *Store) Availability(ctx context.Context, params AvailabilityParams) ([]AvailableCar, error) {
+	if params.Sort == "distance" {
+		return store.availabilityPage(ctx, availabilityByDistanceSQL, params, 0)
+	}
+	return store.availabilityPage(ctx, availabilityByPriceCandidateSQL, params,
+		(params.Limit+params.Offset)*priceCandidateFactor)
+}
+
+// availabilityPage runs one availability shape. candidateLimit binds $10 for
+// the shapes that take one and is ignored by the rest, which stop at $9.
+func (store *Store) availabilityPage(ctx context.Context, query string, params AvailabilityParams, candidateLimit int) ([]AvailableCar, error) {
 	paddedRadiusDegrees := params.RangeMeters / (111320 * cosDegrees(params.Lat))
 	tripHours := params.End.Sub(params.Start).Hours()
-	query := availabilityByPriceSQL
-	if params.Sort == "distance" {
-		query = availabilityByDistanceSQL
-	}
-	rows, err := store.pool.Query(ctx, query,
+	arguments := []any{
 		params.Lng, params.Lat, paddedRadiusDegrees, params.RangeMeters,
-		params.Start, tripHours, params.End, params.Limit, params.Offset)
+		params.Start, tripHours, params.End, params.Limit, params.Offset,
+	}
+	if candidateLimit > 0 {
+		arguments = append(arguments, candidateLimit)
+	}
+	rows, err := store.pool.Query(ctx, query, arguments...)
 	if err != nil {
 		return nil, fmt.Errorf("store: availability: %w", err)
 	}
