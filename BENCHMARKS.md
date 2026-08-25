@@ -1,5 +1,22 @@
 # Benchmarks
 
+## Where it stands today
+
+The current numbers, one API pod against a 400k-car fleet with 26,000 cars inside the search circle. Everything below this table is the method, the history, and the two war stories that produced them.
+
+| what | number | measured how |
+|---|---|---|
+| search, busy area (cache hit) | **44,100/s**, ~7ms | wrk against the real binary, ["The search war story"](#the-search-war-story) |
+| search, every request unique (cache defeated) | **2,240/s**, ~21ms | wrk, worst case, all traffic reaches Postgres |
+| one uncached search, dense NYC | **8.7ms p50** | the store's real SQL, 24 clients |
+| bookings, fleet-wide | **~4,000/s** | [cmd/bench](cmd/bench), any fleet size 1k to 10M |
+| bookings, one contended car | **~1,200/s** | the per-car serialization ceiling, by design |
+| where search started | 52/s | the rank-everything sort, same fleet, ["The search war story"](#the-search-war-story) |
+
+All numbers come from one 24-core dev machine that also ran the load generator, so read them as conservative floors, and as ratios more than absolutes. Search capacity multiplies with pods (the cache is per pod), while Postgres only ever sees distinct search cells per 30 seconds, whatever the user count.
+
+## Store-level results by fleet size
+
 Store-level throughput at four fleet sizes, measured with [cmd/bench](cmd/bench) against Postgres 16 in Docker (4GB shared_buffers, 24GB effective_cache_size) on a 24-core machine, 32 workers, 10s per scenario. All cars sit in one ~35x33km city so density grows with fleet size, which is the interesting variable. 20% of cars carry one future booking so search pays a realistic anti-join cost.
 
 Reproduce with:
@@ -10,7 +27,7 @@ DATABASE_URL=postgres://postgres:carshare@127.0.0.1:5434/carshare?sslmode=disabl
   go run ./cmd/bench -cars 1000000 -duration 10s -workers 32
 ```
 
-## Results
+These availability numbers price the old rank-everything cheapest sort, kept as the baseline the war stories start from.
 
 | fleet | availability (2km radius) | order, random cars | order, one contended car |
 |---|---|---|---|
