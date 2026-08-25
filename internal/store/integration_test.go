@@ -15,6 +15,8 @@ import (
 
 	"carshare/internal/store"
 	"carshare/internal/testutil/pgtest"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 var userCounter atomic.Int64
@@ -114,6 +116,82 @@ func TestContiguousWindowsBothSucceed(t *testing.T) {
 	}
 	if _, err := dataStore.OrderCar(ctx, rentalOrder(car, renterB.ID, start.Add(time.Hour), 1)); err != nil {
 		t.Fatalf("contiguous booking should succeed: %v", err)
+	}
+}
+
+// rawReservationInsert writes a reservation with plain SQL, past every
+// application check, so tests can hit the schema's own defenses.
+const rawReservationInsert = `
+	INSERT INTO cars.reservations (car_id, booker_id, kind, during, price, status)
+	VALUES ($1, $2, 'rental', tstzrange($3, $4), 1000, $5)`
+
+// TestExclusionConstraintBlocksRawInsert proves the schema alone rejects an
+// overlapping confirmed reservation. The CarshareDoubleBookingDetected alert
+// treats a double booking as impossible because of this constraint, so
+// removing or weakening it must fail this test, not just the alert.
+func TestExclusionConstraintBlocksRawInsert(t *testing.T) {
+	pool := pgtest.MustPool(t)
+	dataStore := store.NewWithPool(pool)
+	ctx := context.Background()
+	owner := newUser(t, dataStore, "owner")
+	renter := newUser(t, dataStore, "renter")
+	car := newCar(t, dataStore, owner.ID, 37.77, -122.42, 1000)
+	start := baseTime()
+
+	if _, err := pool.Exec(ctx, rawReservationInsert,
+		car.ID, renter.ID, start, start.Add(2*time.Hour), "confirmed"); err != nil {
+		t.Fatalf("first raw insert: %v", err)
+	}
+
+	_, err := pool.Exec(ctx, rawReservationInsert,
+		car.ID, renter.ID, start.Add(time.Hour), start.Add(3*time.Hour), "confirmed")
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23P01" {
+		t.Fatalf("overlapping raw insert: want exclusion violation 23P01, got %v", err)
+	}
+	if pgErr.ConstraintName != "cars_reservations_no_overlap" {
+		t.Fatalf("want constraint cars_reservations_no_overlap, got %q", pgErr.ConstraintName)
+	}
+
+	// The WHERE clause is part of the guarantee: a cancelled overlap must
+	// stay legal, or cancelling a reservation would have to delete the row.
+	if _, err := pool.Exec(ctx, rawReservationInsert,
+		car.ID, renter.ID, start.Add(time.Hour), start.Add(3*time.Hour), "cancelled"); err != nil {
+		t.Fatalf("cancelled overlap should insert: %v", err)
+	}
+}
+
+// TestDoubleBookedPairsDetectorSeesDamage drops the constraint the way a bad
+// migration would and checks the invariant query actually counts the overlap
+// that then slips in. This query feeds the critical alert; if it goes blind
+// the alert can never fire. pgtest rebuilds the schema for every test, so the
+// damage does not leak.
+func TestDoubleBookedPairsDetectorSeesDamage(t *testing.T) {
+	pool := pgtest.MustPool(t)
+	dataStore := store.NewWithPool(pool)
+	ctx := context.Background()
+	owner := newUser(t, dataStore, "owner")
+	renter := newUser(t, dataStore, "renter")
+	car := newCar(t, dataStore, owner.ID, 37.77, -122.42, 1000)
+	start := baseTime()
+
+	if _, err := pool.Exec(ctx,
+		`ALTER TABLE cars.reservations DROP CONSTRAINT cars_reservations_no_overlap`); err != nil {
+		t.Fatalf("drop constraint: %v", err)
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := pool.Exec(ctx, rawReservationInsert,
+			car.ID, renter.ID, start, start.Add(2*time.Hour), "confirmed"); err != nil {
+			t.Fatalf("raw insert %d: %v", i, err)
+		}
+	}
+
+	pairs, err := dataStore.CountDoubleBookedPairs(ctx)
+	if err != nil {
+		t.Fatalf("invariant: %v", err)
+	}
+	if pairs != 1 {
+		t.Fatalf("double booked pairs = %d, want 1", pairs)
 	}
 }
 
