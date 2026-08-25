@@ -19,7 +19,15 @@ export type Car = {
   readonly is_listed: boolean;
 };
 
-export type AvailableCar = Car & {
+/** A search result row. Slimmer than Car on purpose: search is public, and
+ * the server never reveals who owns a car there. */
+export type AvailableCar = {
+  readonly id: string;
+  readonly model: string;
+  readonly model_year?: number;
+  readonly lat: number;
+  readonly lng: number;
+  readonly price_per_hour: number;
   readonly trip_price: number;
   readonly distance_meters: number;
 };

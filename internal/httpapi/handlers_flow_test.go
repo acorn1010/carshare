@@ -412,6 +412,12 @@ func TestAvailabilityCachingAndDefaultSort(t *testing.T) {
 	if len(first) != 2 || priceOf(first[0]) != 4000 {
 		t.Fatalf("default sort: want the near 4000-cent trip first, got %v", first)
 	}
+	// Search is public, so a row must never say who owns the car.
+	for key := range first[0].(map[string]any) {
+		if key == "owner_id" || key == "is_listed" {
+			t.Fatalf("search row leaks %q", key)
+		}
+	}
 	if calls := counting.availabilityCalls.Load(); calls != 1 {
 		t.Fatalf("calls = %d, want 1", calls)
 	}

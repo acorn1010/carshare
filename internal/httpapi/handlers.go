@@ -3,6 +3,7 @@ package httpapi
 import (
 	"errors"
 	"log/slog"
+	"math"
 	"net/http"
 	"strconv"
 	"time"
@@ -221,20 +222,39 @@ func (server *Server) handleAvailability(writer http.ResponseWriter, request *ht
 	}
 	results := personalizeSearch(cached, lat, lng, duration, sort)
 
+	// availabilityItem is deliberately not carResponse. Search is public, and
+	// who owns which car is nobody's business, so owner_id must not appear.
+	// is_listed is always true here. Coordinates round to 6 decimals (~11cm)
+	// and distance to whole meters: pins and "2.1km away" need no more, and
+	// full-precision floats were half the serialization bill at load.
 	type availabilityItem struct {
-		carResponse
+		ID             string  `json:"id"`
+		Model          string  `json:"model"`
+		ModelYear      *int    `json:"model_year,omitempty"`
+		Lat            float64 `json:"lat"`
+		Lng            float64 `json:"lng"`
+		PricePerHour   int     `json:"price_per_hour"`
 		TripPrice      int     `json:"trip_price"`
 		DistanceMeters float64 `json:"distance_meters"`
+	}
+	type availabilityResponse struct {
+		Cars []availabilityItem `json:"cars"`
+		Page int                `json:"page"`
 	}
 	items := make([]availabilityItem, 0, len(results))
 	for _, result := range results {
 		items = append(items, availabilityItem{
-			carResponse:    toCarResponse(result.Car),
+			ID:             result.ID,
+			Model:          result.Model,
+			ModelYear:      result.ModelYear,
+			Lat:            math.Round(result.Lat*1e6) / 1e6,
+			Lng:            math.Round(result.Lng*1e6) / 1e6,
+			PricePerHour:   result.PricePerHour,
 			TripPrice:      result.TripPrice,
-			DistanceMeters: result.DistanceMeters,
+			DistanceMeters: math.Round(result.DistanceMeters),
 		})
 	}
-	writeJSON(writer, http.StatusOK, map[string]any{"cars": items, "page": page})
+	writeJSON(writer, http.StatusOK, availabilityResponse{Cars: items, Page: page})
 }
 
 // handleOrderCar books a car: a rental, a short pre-payment hold, or an owner
