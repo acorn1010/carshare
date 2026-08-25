@@ -83,10 +83,13 @@ resource "kubernetes_deployment_v1" "carshare" {
           resources {
             requests = {
               cpu    = "100m"
-              memory = "64Mi"
+              # The in-memory fleet holds every car and its busy windows,
+              # measured at 476Mi for 400k cars, so the live 725k-car fleet
+              # needs roughly 900Mi plus GC headroom.
+              memory = "1Gi"
             }
             limits = {
-              memory = "256Mi"
+              memory = "1536Mi"
             }
           }
 
