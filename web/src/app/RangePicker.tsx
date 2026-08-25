@@ -165,7 +165,7 @@ function TriggerField({ label, value, active, onClick }: {
   );
 }
 
-function MonthGrid({ year, month, from, until, onPick }: {
+export function MonthGrid({ year, month, from, until, onPick }: {
   readonly year: number;
   readonly month: number;
   readonly from: Date;
@@ -221,7 +221,7 @@ function MonthGrid({ year, month, from, until, onPick }: {
   );
 }
 
-function TimeSelect({ label, value, onChange }: {
+export function TimeSelect({ label, value, onChange }: {
   readonly label: string;
   readonly value: number;
   readonly onChange: (minutesIntoDay: number) => void;

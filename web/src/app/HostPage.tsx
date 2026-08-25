@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ApiError, api, signIn, type Calendar, type Car, type Me } from './api';
 import { CarPhoto } from './CarArt';
-import { DatePicker } from './DatePicker';
+import { SchedulePicker } from './SchedulePicker';
 import { money, window as formatWindow } from './format';
 import { MapView } from './MapView';
 import { Button, Chip, Plate, useToast } from './ui';
@@ -183,9 +183,11 @@ function CarCard({ car, onChange, onFail, onDone }: {
             {car.model || 'Car'}
             {car.model_year ? <span className="font-medium text-paper-600"> · {car.model_year}</span> : null}
           </span>
-          <Plate className="mt-0.5 self-start text-sm">{money(car.price_per_hour)}/h</Plate>
+          <span className="mt-0.5 flex items-center gap-2">
+            <Plate className="text-sm">{money(car.price_per_hour)}/h</Plate>
+            {car.is_listed ? <Chip tone="pine">listed</Chip> : <Chip tone="paper">hidden</Chip>}
+          </span>
         </span>
-        {car.is_listed ? <Chip tone="pine">listed</Chip> : <Chip tone="paper">hidden</Chip>}
         <div className="ml-auto flex items-center gap-2">
           <Button
             tone="ghost"
@@ -275,7 +277,7 @@ function CarCard({ car, onChange, onFail, onDone }: {
                 ))}
               </ul>
             ) : null}
-            <AddSchedule
+            <SchedulePicker
               onAdd={(from, durationMinutes, period) =>
                 api
                   .createSchedule({
@@ -296,43 +298,5 @@ function CarCard({ car, onChange, onFail, onDone }: {
         </div>
       ) : null}
     </section>
-  );
-}
-
-function AddSchedule({ onAdd }: {
-  readonly onAdd: (fromIso: string, durationMinutes: number, period: 'weekly' | 'monthly' | 'yearly') => void;
-}) {
-  const [from, setFrom] = useState<Date>(() => new Date(Date.now() + 24 * 3600 * 1000));
-  const [durationMinutes, setDurationMinutes] = useState(120);
-  const [period, setPeriod] = useState<'weekly' | 'monthly' | 'yearly'>('weekly');
-
-  return (
-    <div className="flex flex-wrap items-end gap-2">
-      <DatePicker label="First occurrence" value={from} onChange={setFrom} />
-      <select
-        value={durationMinutes}
-        onChange={(event) => setDurationMinutes(Number(event.target.value))}
-        className="rounded-lg border border-paper-300 bg-paper-50 px-2 py-2 text-sm font-semibold"
-        aria-label="Duration"
-      >
-        <option value={60}>1 hour</option>
-        <option value={120}>2 hours</option>
-        <option value={240}>4 hours</option>
-        <option value={480}>8 hours</option>
-      </select>
-      <select
-        value={period}
-        onChange={(event) => setPeriod(event.target.value as 'weekly' | 'monthly' | 'yearly')}
-        className="rounded-lg border border-paper-300 bg-paper-50 px-2 py-2 text-sm font-semibold"
-        aria-label="Repeats"
-      >
-        <option value="weekly">weekly</option>
-        <option value="monthly">monthly</option>
-        <option value="yearly">yearly</option>
-      </select>
-      <Button tone="ghost" onClick={() => onAdd(from.toISOString(), durationMinutes, period)}>
-        Add
-      </Button>
-    </div>
   );
 }
