@@ -1,0 +1,15 @@
+# Cloudflare Worker for cars.foony.com: serves the built site and proxies
+# /v1/* to the API origin so the browser only ever sees one origin (first-party
+# session cookie, no CORS). Deploy: npm run deploy
+# The cars.foony.com/* route is managed by terraform/, not here.
+
+name = "carshare-web"
+main = "src/worker.js"
+compatibility_date = "2025-01-30"
+account_id = "4ab58809bf9aadea5483184a8c5138ff"
+
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+html_handling = "drop-trailing-slash"
+not_found_handling = "single-page-application"

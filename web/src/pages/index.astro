@@ -1,0 +1,8 @@
+---
+import Layout from '../layouts/Layout.astro';
+import { App } from '../app/App';
+---
+
+<Layout title="Carshare — rent a car by the hour">
+  <App page="search" client:only="react" />
+</Layout>
