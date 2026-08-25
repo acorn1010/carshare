@@ -25,15 +25,7 @@ Sign-in needs Google OAuth credentials (`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRE
 
 ## Architecture
 
-```
-browser ── Cloudflare ── Worker at cars.foony.com (serves the site, proxies /v1)
-                             │
-                     cars-api.foony.com
-                             │
-                Traefik ingress ── carshare pods (2..10, HPA)
-                                        │
-                                   Postgres ──nightly──▶ R2 (pg_dump)
-```
+![How a booking flows: two racing tabs, the Worker, the Go API with its search cache and per-car lock, and Postgres where one exclusion constraint decides the winner](docs/architecture.svg)
 
 The frontend ([web/](web/)) is Astro + React + Tailwind on a Cloudflare Worker. The Worker serves static assets from the edge and passes `/v1/*` through to the API, so the browser sees a single origin: the session cookie stays first-party and no CORS exists anywhere. Frontend deploys are a `wrangler deploy`, fully decoupled from backend rolls.
 

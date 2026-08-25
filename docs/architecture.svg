@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 430" font-family="ui-sans-serif, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 1 L 9 5 L 0 9 z" fill="#63615c"/>
+    </marker>
+  </defs>
+
+  <!-- backdrop card so the diagram reads on light and dark GitHub themes -->
+  <rect x="0" y="0" width="960" height="430" rx="18" fill="#ffffff" stroke="#d8d8d4"/>
+
+  <!-- ============ browser: the two-tab race ============ -->
+  <rect x="28" y="96" width="180" height="196" rx="14" fill="#f7f7f6" stroke="#d8d8d4"/>
+  <text x="118" y="126" text-anchor="middle" font-size="15" font-weight="800" fill="#1d1d1b">Browser</text>
+  <text x="118" y="144" text-anchor="middle" font-size="11" fill="#63615c">two tabs, same car, same hour</text>
+
+  <rect x="46" y="160" width="144" height="44" rx="8" fill="#ffffff" stroke="#16714a" stroke-width="2"/>
+  <text x="118" y="179" text-anchor="middle" font-size="11" fill="#63615c">tab A</text>
+  <text x="118" y="195" text-anchor="middle" font-size="13" font-weight="800" letter-spacing="2" fill="#16714a">BOOKED</text>
+
+  <rect x="46" y="216" width="144" height="44" rx="8" fill="#ffffff" stroke="#c94e32" stroke-width="2"/>
+  <text x="118" y="235" text-anchor="middle" font-size="11" fill="#63615c">tab B, 409</text>
+  <text x="118" y="251" text-anchor="middle" font-size="13" font-weight="800" letter-spacing="2" fill="#c94e32">JUST TAKEN</text>
+
+  <!-- ============ worker ============ -->
+  <rect x="272" y="118" width="176" height="152" rx="14" fill="#f7f7f6" stroke="#d8d8d4"/>
+  <rect x="290" y="140" width="140" height="30" rx="6" fill="#16714a"/>
+  <text x="360" y="160" text-anchor="middle" font-size="13" font-weight="800" letter-spacing="1" fill="#ffffff">cars.foony.com</text>
+  <text x="360" y="192" text-anchor="middle" font-size="12" font-weight="700" fill="#1d1d1b">Cloudflare Worker</text>
+  <text x="360" y="210" text-anchor="middle" font-size="11" fill="#63615c">site from the edge</text>
+  <text x="360" y="226" text-anchor="middle" font-size="11" fill="#63615c">proxies /v1 same-origin</text>
+  <text x="360" y="242" text-anchor="middle" font-size="11" fill="#63615c">first-party cookie, no CORS</text>
+
+  <!-- ============ api pods ============ -->
+  <rect x="512" y="96" width="196" height="196" rx="14" fill="#f7f7f6" stroke="#d8d8d4"/>
+  <text x="610" y="126" text-anchor="middle" font-size="15" font-weight="800" fill="#1d1d1b">Go API</text>
+  <text x="610" y="144" text-anchor="middle" font-size="11" fill="#63615c">stateless pods, HPA 2..10</text>
+  <rect x="530" y="158" width="160" height="52" rx="8" fill="#ffffff" stroke="#d8d8d4"/>
+  <text x="610" y="178" text-anchor="middle" font-size="11" font-weight="700" fill="#1d1d1b">search cache, 30s</text>
+  <text x="610" y="194" text-anchor="middle" font-size="10.5" fill="#63615c">snapped cells, single-flight</text>
+  <rect x="530" y="220" width="160" height="52" rx="8" fill="#ffffff" stroke="#d8d8d4"/>
+  <text x="610" y="240" text-anchor="middle" font-size="11" font-weight="700" fill="#1d1d1b">per-car advisory lock</text>
+  <text x="610" y="256" text-anchor="middle" font-size="10.5" fill="#63615c">bookings queue, never deadlock</text>
+
+  <!-- ============ postgres ============ -->
+  <rect x="762" y="60" width="176" height="268" rx="14" fill="#0f4630"/>
+  <text x="850" y="92" text-anchor="middle" font-size="15" font-weight="800" fill="#ffffff">Postgres</text>
+  <text x="850" y="110" text-anchor="middle" font-size="11" fill="#b0dec6">the only source of truth</text>
+
+  <rect x="778" y="128" width="144" height="88" rx="8" fill="#ffffff" stroke="#16714a" stroke-width="2"/>
+  <text x="850" y="150" text-anchor="middle" font-size="10.5" font-weight="800" letter-spacing="0.3" fill="#16714a">EXCLUDE USING gist</text>
+  <text x="850" y="168" text-anchor="middle" font-size="10.5" font-family="ui-monospace, monospace" fill="#1d1d1b">(car_id WITH =,</text>
+  <text x="850" y="183" text-anchor="middle" font-size="10.5" font-family="ui-monospace, monospace" fill="#1d1d1b">during WITH &amp;&amp;)</text>
+  <text x="850" y="204" text-anchor="middle" font-size="10.5" fill="#63615c">double-booking impossible</text>
+
+  <text x="850" y="242" text-anchor="middle" font-size="11" fill="#b0dec6">725k cars, GiST point index</text>
+  <text x="850" y="260" text-anchor="middle" font-size="11" fill="#b0dec6">recurrences solved in SQL</text>
+  <text x="850" y="278" text-anchor="middle" font-size="11" fill="#b0dec6">single-row state machine</text>
+  <text x="850" y="296" text-anchor="middle" font-size="11" fill="#b0dec6">CDC-ready via logical repl.</text>
+
+  <!-- ============ arrows ============ -->
+  <line x1="208" y1="194" x2="266" y2="194" stroke="#63615c" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="448" y1="194" x2="506" y2="194" stroke="#63615c" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="477" y="182" text-anchor="middle" font-size="10.5" fill="#63615c">/v1</text>
+  <line x1="708" y1="194" x2="756" y2="194" stroke="#63615c" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="732" y="182" text-anchor="middle" font-size="10.5" fill="#63615c">SQL</text>
+
+  <!-- backups -->
+  <rect x="778" y="352" width="144" height="42" rx="8" fill="#f7f7f6" stroke="#d8d8d4"/>
+  <text x="850" y="370" text-anchor="middle" font-size="11" font-weight="700" fill="#1d1d1b">R2 bucket</text>
+  <text x="850" y="386" text-anchor="middle" font-size="10.5" fill="#63615c">restore drill rehearsed</text>
+  <line x1="850" y1="328" x2="850" y2="346" stroke="#63615c" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="864" y="342" font-size="10.5" fill="#63615c">nightly pg_dump</text>
+
+  <!-- deploy strip -->
+  <text x="28" y="366" font-size="11" font-weight="700" fill="#1d1d1b">Deploys</text>
+  <text x="28" y="384" font-size="10.5" fill="#63615c">GitHub Actions builds and tests every push (race detector, real Postgres, psqldef round-trip).</text>
+  <text x="28" y="400" font-size="10.5" fill="#63615c">Terraform applies infra; CI never holds a cluster credential. Frontend deploys itself via Wrangler.</text>
+
+  <!-- race annotation -->
+  <text x="118" y="316" text-anchor="middle" font-size="10.5" fill="#63615c">one write wins, the schema</text>
+  <text x="118" y="331" text-anchor="middle" font-size="10.5" fill="#63615c">refuses the other, every time</text>
+</svg>
