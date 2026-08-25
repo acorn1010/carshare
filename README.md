@@ -156,9 +156,9 @@ Every state transition here is a single-row write: booking is one `INSERT`, conf
 Honest answers for the "what if it is 100M cars and 30k qps" question:
 
 - **Reads first.** Already built: the [30-second snapped cache](internal/httpapi/searchcache.go) means search load is bounded by distinct busy cells per 30 seconds, not by users. 30k qps of searchers concentrated on a hundred hot neighborhoods is a few hundred database queries a minute.
-- **Partition by city.** Cars never move between cities mid-search, so city id is a natural shard key for cars and reservations. Each shard is this exact system, small.
+- **Shard by geography, not by a city id.** There is deliberately no city column anywhere, cars are bare coordinates and searches are lat/lng circles, so the shard key at extreme scale is the map itself: coarse regions sized so a max-radius circle almost always falls inside one shard. A circle that straddles a boundary fans out to the neighbor and merges two pages, a car whose owner moves it across a boundary is one row migration, and bookings shard perfectly because a reservation lives wherever its car does. Each shard is this exact system, small.
 - **The constraint scales with you.** The exclusion check is an index lookup on (car, time), it does not care how many other cars exist. Booking write volume per car is human-scale by definition.
-- **Global serving** is cities pinned to regional databases with anycast routing to the nearest region, not one worldwide database.
+- **Global serving** is those geographic shards pinned to regional databases with anycast routing to the nearest region, not one worldwide database.
 
 ## Repo layout
 
