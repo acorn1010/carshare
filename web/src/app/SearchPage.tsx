@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type UIEvent } from 'react';
 import { api, type AvailableCar, type Me } from './api';
 import { CarPhoto } from './CarArt';
 import { RangePicker } from './RangePicker';
@@ -27,7 +27,9 @@ function defaultStart(): Date {
 }
 
 /** Search screen, marketplace style: a hero band with the Where / From /
- * Until box up top, plate-marked map and result list below. */
+ * Until box up top, then a viewport-locked split with the car list scrolling
+ * on the left and the map always on screen to the right. Scrolling the list
+ * collapses the hero down to just the search box. */
 export function SearchPage({ me }: { readonly me: Me | null | 'loading' }) {
   const [place, setPlace] = useState<{ name: string; lat: number; lng: number }>(PLACES[0]);
   const [from, setFrom] = useState<Date>(defaultStart);
@@ -36,6 +38,8 @@ export function SearchPage({ me }: { readonly me: Me | null | 'loading' }) {
   const [movedCenter, setMovedCenter] = useState<{ lat: number; lng: number } | null>(null);
   const [cars, setCars] = useState<readonly AvailableCar[] | 'loading'>('loading');
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [heroCollapsed, setHeroCollapsed] = useState(false);
+  const listPane = useRef<HTMLDivElement>(null);
   const { toast, show } = useToast();
 
   const durationMinutes = Math.max(15, Math.round((until.getTime() - from.getTime()) / 60_000));
@@ -59,16 +63,45 @@ export function SearchPage({ me }: { readonly me: Me | null | 'loading' }) {
     setPlace({ name: 'This area', lat: at.lat, lng: at.lng });
   };
 
+  // The hero collapses once the list has scrolled and comes back at the top.
+  const onListScroll = (event: UIEvent<HTMLDivElement>) => {
+    setHeroCollapsed(event.currentTarget.scrollTop > 0);
+  };
+
+  // The page itself never scrolls, so a wheel anywhere outside the map acts
+  // on the car list: the hero, the header, the gutters beside the content.
+  // The list pane scrolls natively, the map wheel zooms, and fixed overlays
+  // (the booking sheet) keep their wheel to themselves.
+  useEffect(() => {
+    const onWheel = (event: globalThis.WheelEvent) => {
+      const pane = listPane.current;
+      const target = event.target instanceof Element ? event.target : null;
+      if (!pane || !target || pane.contains(target)) {
+        return;
+      }
+      if (target.closest('.leaflet-container') || target.closest('.fixed')) {
+        return;
+      }
+      pane.scrollBy({ top: event.deltaY });
+    };
+    window.addEventListener('wheel', onWheel, { passive: true });
+    return () => window.removeEventListener('wheel', onWheel);
+  }, []);
+
   return (
-    <div>
-      <section className="rounded-3xl bg-pine-800 px-6 py-10 sm:px-10 sm:py-14">
-        <h1 className="text-center text-3xl font-extrabold tracking-tight text-paper-50 sm:text-5xl">
-          Rent a car, fast
-        </h1>
-        <p className="pt-2 text-center text-sm font-medium text-pine-200">
-          Every price is locked when you book, and a booked hour can never be sold twice.
-        </p>
-        <div className="mt-6 flex flex-wrap items-end gap-x-5 gap-y-4 rounded-2xl bg-paper-50 p-4 shadow-sheet">
+    <div className="flex h-full flex-col">
+      <section className={`rounded-3xl bg-pine-800 ${heroCollapsed ? 'p-3 sm:p-4' : 'px-6 py-10 sm:px-10 sm:py-14'}`}>
+        {heroCollapsed ? null : (
+          <>
+            <h1 className="text-center text-3xl font-extrabold tracking-tight text-paper-50 sm:text-5xl">
+              Rent a car, fast
+            </h1>
+            <p className="pt-2 text-center text-sm font-medium text-pine-200">
+              Every price is locked when you book, and a booked hour can never be sold twice.
+            </p>
+          </>
+        )}
+        <div className={`flex flex-wrap items-end gap-x-5 gap-y-4 rounded-2xl bg-paper-50 p-4 shadow-sheet ${heroCollapsed ? '' : 'mt-6'}`}>
           <WherePicker place={place} onChange={setPlace} />
           <RangePicker
             from={from}
@@ -89,8 +122,8 @@ export function SearchPage({ me }: { readonly me: Me | null | 'loading' }) {
         </div>
       </section>
 
-      <div className="grid gap-4 pt-6 lg:grid-cols-5">
-        <div className="order-2 lg:order-1 lg:col-span-2">
+      <div className="grid min-h-0 flex-1 grid-rows-[18rem_minmax(0,1fr)] gap-4 pt-4 lg:grid-cols-5 lg:grid-rows-[minmax(0,1fr)]">
+        <div className="order-2 flex min-h-0 flex-col lg:order-1 lg:col-span-2">
           <div className="flex items-center gap-1 pb-3">
             <span className="pr-2 text-xs font-semibold uppercase tracking-wide text-paper-600">Sort</span>
             {(['distance', 'price'] as const).map((option) => (
@@ -106,44 +139,50 @@ export function SearchPage({ me }: { readonly me: Me | null | 'loading' }) {
               </button>
             ))}
           </div>
-          {cars === 'loading' ? (
-            <p className="py-8 text-sm text-paper-600">Looking for free cars…</p>
-          ) : cars.length === 0 ? (
-            <p className="py-8 text-sm text-paper-600">No cars free for that window. Try another time.</p>
-          ) : (
-            <ul className="flex flex-col gap-2">
-              {cars.map((car, index) => (
-                <li key={car.id}>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedId(car.id)}
-                    className={`animate-rise flex w-full items-center gap-4 overflow-hidden rounded-xl border bg-paper-50 pr-4 text-left shadow-card transition-colors duration-75 motion-reduce:animate-none ${
-                      selectedId === car.id ? 'border-pine-600 active:bg-paper-100' : 'border-transparent hover:border-paper-400 active:bg-paper-100'
-                    }`}
-                    style={{ animationDelay: `${Math.min(index, 12) * 25}ms` }}
-                  >
-                    <CarPhoto model={car.model} carId={car.id} className="h-20 w-28 shrink-0 self-stretch" />
-                    <span className="flex min-w-0 flex-col">
-                      <span className="truncate text-sm font-bold">
-                        {car.model || 'Car'}
-                        {car.model_year ? <span className="font-medium text-paper-600"> · {car.model_year}</span> : null}
+          <div ref={listPane} onScroll={onListScroll} className="-mx-1 px-1 pb-1 lg:min-h-0 lg:flex-1 lg:overflow-y-auto">
+            {cars === 'loading' ? (
+              <p className="py-8 text-sm text-paper-600">Looking for free cars…</p>
+            ) : cars.length === 0 ? (
+              <p className="py-8 text-sm text-paper-600">No cars free for that window. Try another time.</p>
+            ) : (
+              <ul className="flex flex-col gap-2">
+                {cars.map((car, index) => (
+                  <li key={car.id}>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedId(car.id)}
+                      className={`animate-rise flex w-full items-center gap-4 overflow-hidden rounded-xl border bg-paper-50 pr-4 text-left shadow-card transition-colors duration-75 motion-reduce:animate-none ${
+                        selectedId === car.id ? 'border-pine-600 active:bg-paper-100' : 'border-transparent hover:border-paper-400 active:bg-paper-100'
+                      }`}
+                      style={{ animationDelay: `${Math.min(index, 12) * 25}ms` }}
+                    >
+                      <CarPhoto model={car.model} carId={car.id} className="h-20 w-28 shrink-0 self-stretch" />
+                      <span className="flex min-w-0 flex-col">
+                        <span className="truncate text-sm font-bold">
+                          {car.model || 'Car'}
+                          {car.model_year ? <span className="font-medium text-paper-600"> · {car.model_year}</span> : null}
+                        </span>
+                        <span className="text-xs text-paper-600">
+                          {money(car.price_per_hour)}/h · {distance(car.distance_meters)} away
+                        </span>
                       </span>
-                      <span className="text-xs text-paper-600">
-                        {money(car.price_per_hour)}/h · {distance(car.distance_meters)} away
-                      </span>
-                    </span>
-                    <Plate tone={selectedId === car.id ? 'pine' : 'ink'} className="ml-auto text-lg">
-                      {money(car.trip_price)}
-                    </Plate>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
+                      <Plate tone={selectedId === car.id ? 'pine' : 'ink'} className="ml-auto text-lg">
+                        {money(car.trip_price)}
+                      </Plate>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <p className="mt-4 border-t border-paper-300 py-4 text-xs text-paper-600">
+              A demo of an open-source reservation engine. Double-booking is impossible by construction, try it: book
+              the same car in two tabs.
+            </p>
+          </div>
         </div>
-        <div className="relative order-1 lg:order-2 lg:col-span-3">
+        <div className="relative order-1 min-h-0 lg:order-2 lg:col-span-3">
           <MapView
-            className="h-72 w-full rounded-2xl shadow-card lg:h-[34rem]"
+            className="h-full w-full rounded-2xl shadow-card"
             center={[place.lat, place.lng]}
             cars={cars === 'loading' ? [] : cars.map((car) => ({
               id: car.id,

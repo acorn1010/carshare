@@ -78,11 +78,25 @@ export function App({ page: initialPage }: { readonly page: Page }) {
     }
   };
 
+  // On desktop, search locks to the viewport: the car list scrolls in its
+  // own pane and the map stays on screen. Phones keep the normal document
+  // scroll, the hero alone nearly fills their screen. The other pages scroll
+  // the document as usual.
+  if (page === 'search') {
+    return (
+      <div className="mx-auto flex min-h-dvh max-w-6xl flex-col px-4 sm:px-6 lg:h-dvh">
+        <Header page={page} me={me} onNavigate={navigate} />
+        <main className="min-h-0 flex-1 pb-4">
+          <SearchPage me={me} />
+        </main>
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto flex min-h-screen max-w-6xl flex-col px-4 sm:px-6">
       <Header page={page} me={me} onNavigate={navigate} />
       <main className="flex-1 pb-16">
-        {page === 'search' && <SearchPage me={me} />}
         {page === 'trips' && <TripsPage me={me} />}
         {page === 'host' && <HostPage me={me} />}
       </main>

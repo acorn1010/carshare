@@ -59,7 +59,18 @@ export function MapView({ cars, center, zoom = 13, onSelect, onPick, onMoved, pi
     });
     map.current = created;
     layer.current = L.layerGroup().addTo(created);
+    // The pane resizes when the hero collapses; Leaflet only redraws tiles
+    // for the new size when told. invalidateSize fires moveend even without
+    // panning, so guard it or a resize fakes a user drag. The fire is
+    // synchronous (no animation), which lets the flag reset right after.
+    const observer = new ResizeObserver(() => {
+      programmaticMove.current = true;
+      created.invalidateSize({ pan: false });
+      programmaticMove.current = false;
+    });
+    observer.observe(container.current);
     return () => {
+      observer.disconnect();
       created.remove();
       map.current = null;
       layer.current = null;
