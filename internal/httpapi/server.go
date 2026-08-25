@@ -34,20 +34,29 @@ type Params struct {
 
 // Server holds the wired dependencies.
 type Server struct {
-	params   Params
-	searches *searchCache
+	params Params
+	// searches caches one page each, counts cache one per whole search.
+	searches *searchCache[[]store.AvailableCar]
+	counts   *searchCache[int]
 }
 
 // NewServer wires the API.
 func NewServer(params Params) *Server {
-	return &Server{params: params, searches: newSearchCache()}
+	return &Server{
+		params:   params,
+		searches: newSearchCache[[]store.AvailableCar](),
+		counts:   newSearchCache[int](),
+	}
 }
 
 // pageSize is the availability page size, and maxPages caps total results at
-// 1,000 per search as specified.
+// 1,000 per search as specified. countCap counts one past that ceiling, so a
+// search that fills every page can be reported as "1,000+" rather than as a
+// wrong exact number.
 const (
 	pageSize = 100
 	maxPages = 10
+	countCap = pageSize*maxPages + 1
 )
 
 // Routes builds the public mux. Every route is instrumented with the pattern

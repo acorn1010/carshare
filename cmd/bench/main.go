@@ -69,15 +69,38 @@ func main() {
 	bookerID := benchUser(ctx, pool)
 	fmt.Printf("== measuring with %d workers for %s per scenario\n", *workers, *duration)
 
-	runScenario(ctx, "availability", *workers, *duration, func(generator *rand.Rand) error {
+	// The two sorts have different cost shapes and the gap is large, so they
+	// are measured apart. Distance is what the API serves by default: it
+	// early-exits out of the location index. Price has to rank the whole
+	// circle before it knows the cheapest, so it pays for density.
+	for _, sortMode := range []string{"distance", "price"} {
+		runScenario(ctx, "availability ("+sortMode+")", *workers, *duration, func(generator *rand.Rand) error {
+			start := time.Now().Add(time.Duration(1+generator.Intn(72)) * time.Hour)
+			_, err := dataStore.Availability(ctx, store.AvailabilityParams{
+				Lat:         citySouthLat + generator.Float64()*cityLatSpan,
+				Lng:         cityLngWest + generator.Float64()*cityLngSpan,
+				RangeMeters: *searchRadius,
+				Start:       start,
+				End:         start.Add(2 * time.Hour),
+				Sort:        sortMode,
+				Limit:       100,
+			})
+			return err
+		})
+	}
+
+	// A count runs once per search rather than once per page, but it walks as
+	// far as the deepest page a searcher can reach, so this is the number to
+	// watch when judging what showing a result total costs.
+	runScenario(ctx, "availability count", *workers, *duration, func(generator *rand.Rand) error {
 		start := time.Now().Add(time.Duration(1+generator.Intn(72)) * time.Hour)
-		_, err := dataStore.Availability(ctx, store.AvailabilityParams{
+		_, err := dataStore.AvailabilityCount(ctx, store.AvailabilityCountParams{
 			Lat:         citySouthLat + generator.Float64()*cityLatSpan,
 			Lng:         cityLngWest + generator.Float64()*cityLngSpan,
 			RangeMeters: *searchRadius,
 			Start:       start,
 			End:         start.Add(2 * time.Hour),
-			Limit:       100,
+			Cap:         1001,
 		})
 		return err
 	})

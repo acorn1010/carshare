@@ -254,6 +254,36 @@ func (server *Server) handleAvailability(writer http.ResponseWriter, request *ht
 	}
 	results := personalizeSearch(cached, lat, lng, duration, sort)
 
+	// A short page already answers how many cars there are: everything skipped
+	// plus what came back. Only a page that filled needs the database to say
+	// what is past it, which is what keeps the count off the common path.
+	total := page*pageSize + len(cached)
+	capped := false
+	if len(cached) == pageSize {
+		counted, countHit, countErr := server.counts.Do(request.Context(), snapped.countKey, func() (int, error) {
+			return server.params.Store.AvailabilityCount(request.Context(), store.AvailabilityCountParams{
+				Lat: snapped.lat, Lng: snapped.lng, RangeMeters: snapped.rangeMeters,
+				Start: snapped.start, End: snapped.end, Cap: countCap,
+			})
+		})
+		if countErr != nil {
+			slog.Error("availability count", slog.String("error", countErr.Error()))
+			metrics.ErrorsTotal.WithLabelValues("availability", "count").Inc()
+			writeStoreError(writer, countErr)
+			return
+		}
+		if countHit {
+			metrics.SearchCacheTotal.WithLabelValues("count_hit").Inc()
+		} else {
+			metrics.SearchCacheTotal.WithLabelValues("count_miss").Inc()
+		}
+		total = counted
+		if total >= countCap {
+			total = countCap - 1
+			capped = true
+		}
+	}
+
 	// availabilityItem is deliberately not carResponse. Search is public, and
 	// who owns which car is nobody's business, so owner_id must not appear.
 	// is_listed is always true here. Coordinates round to 6 decimals (~11cm)
@@ -269,9 +299,14 @@ func (server *Server) handleAvailability(writer http.ResponseWriter, request *ht
 		TripPrice      int     `json:"trip_price"`
 		DistanceMeters float64 `json:"distance_meters"`
 	}
+	// Total is how many cars the search matches, and Capped says the real
+	// number is higher: counting stops at the same 1,000 the pager can reach,
+	// so a client shows "1,000+" rather than a number that is quietly wrong.
 	type availabilityResponse struct {
-		Cars []availabilityItem `json:"cars"`
-		Page int                `json:"page"`
+		Cars   []availabilityItem `json:"cars"`
+		Page   int                `json:"page"`
+		Total  int                `json:"total"`
+		Capped bool               `json:"capped"`
 	}
 	items := make([]availabilityItem, 0, len(results))
 	for _, result := range results {
@@ -286,7 +321,7 @@ func (server *Server) handleAvailability(writer http.ResponseWriter, request *ht
 			DistanceMeters: math.Round(result.DistanceMeters),
 		})
 	}
-	writeJSON(writer, http.StatusOK, availabilityResponse{Cars: items, Page: page})
+	writeJSON(writer, http.StatusOK, availabilityResponse{Cars: items, Page: page, Total: total, Capped: capped})
 }
 
 // handleOrderCar books a car: a rental, a short pre-payment hold, or an owner

@@ -193,6 +193,21 @@ type AvailabilityParams struct {
 	Offset int
 }
 
+// AvailabilityCountParams is a request for how many cars a search matches.
+// Every field means what the same-named field on AvailabilityParams means,
+// except Cap. Sort is absent because a count does not depend on the order.
+type AvailabilityCountParams struct {
+	Lat         float64
+	Lng         float64
+	RangeMeters float64
+	Start       time.Time
+	End         time.Time
+	// Cap stops the count once this many cars match, so a count costs the
+	// same in a dense city as a sparse one. A result equal to Cap means "at
+	// least this many", not "exactly this many".
+	Cap int
+}
+
 // OrderParams is a booking request.
 type OrderParams struct {
 	// CarID is the car to book.
@@ -245,6 +260,7 @@ type DataStore interface {
 	CarsByOwner(ctx context.Context, ownerID string) ([]Car, error)
 
 	Availability(ctx context.Context, params AvailabilityParams) ([]AvailableCar, error)
+	AvailabilityCount(ctx context.Context, params AvailabilityCountParams) (int, error)
 	OrderCar(ctx context.Context, params OrderParams) (Reservation, error)
 	ConfirmHold(ctx context.Context, reservationID, bookerID string) (Reservation, error)
 	CancelReservation(ctx context.Context, reservationID, bookerID string) error
@@ -525,6 +541,44 @@ const availabilityByDistanceSQL = `
 		WHERE distance_meters <= $4
 		ORDER BY distance_meters, trip_price, id
 		LIMIT $8 OFFSET $9`
+
+// availabilityCountSQL counts matches without ordering them, stopping at the
+// caller's cap. It reuses the distance variant's degree-ordered index scan and
+// its 2x over-fetch, so the count sees the same candidate pool the deepest
+// reachable page does and the two always agree. Counting the price variant the
+// same way is not just allowed but cheaper than paging it: with no ORDER BY,
+// Postgres stops at the cap instead of ranking the whole circle.
+const availabilityCountSQL = `
+		SELECT count(*) FROM (
+		  SELECT 1 FROM (` + availabilityFilterSQL + `
+		    ORDER BY c.location <-> point($1, $2)
+		    LIMIT 2 * $8::int
+		  ) sub
+		  WHERE distance_meters <= $4
+		  LIMIT $8::int
+		) counted`
+
+// AvailabilityCount reports how many cars match a search, counting no further
+// than params.Cap. It exists so search can show how many results there are and
+// how many pages that is, which a page of rows cannot say on its own.
+//
+// The cap is what keeps this affordable: without it a count would have to walk
+// every car in the circle, which is exactly the density-proportional cost the
+// paged query is written to avoid.
+func (store *Store) AvailabilityCount(ctx context.Context, params AvailabilityCountParams) (int, error) {
+	paddedRadiusDegrees := params.RangeMeters / (111320 * cosDegrees(params.Lat))
+	tripHours := params.End.Sub(params.Start).Hours()
+	var total int
+	// $6 (trip hours) and $8 (the cap) are the only params the projection
+	// needs, but the filter is shared verbatim so every placeholder is bound.
+	err := store.pool.QueryRow(ctx, availabilityCountSQL,
+		params.Lng, params.Lat, paddedRadiusDegrees, params.RangeMeters,
+		params.Start, tripHours, params.End, params.Cap).Scan(&total)
+	if err != nil {
+		return 0, fmt.Errorf("store: availability count: %w", err)
+	}
+	return total, nil
+}
 
 // Availability lists cars free for the whole window. Sort "distance" (the
 // handler's default) walks the location index nearest-first and early-exits;

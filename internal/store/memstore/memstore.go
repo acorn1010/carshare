@@ -150,20 +150,49 @@ func (memory *Store) GetCar(_ context.Context, carID string) (store.Car, error) 
 	return car, nil
 }
 
+// searchMatch reports whether a car is listed, inside the radius, and free for
+// the whole window, along with how far away it is. Availability and
+// AvailabilityCount have to agree on what matches, so both ask this. Caller
+// holds the mutex.
+func (memory *Store) searchMatch(car store.Car, lat, lng, rangeMeters float64, start, end time.Time) (float64, bool) {
+	if !car.IsListed {
+		return 0, false
+	}
+	distance := store.DistanceMeters(lat, lng, car.Lat, car.Lng)
+	if distance > rangeMeters {
+		return 0, false
+	}
+	if memory.carBlocked(car.ID, start, end) {
+		return 0, false
+	}
+	return distance, true
+}
+
+// AvailabilityCount mirrors the Postgres store: count matches, stop at the cap.
+func (memory *Store) AvailabilityCount(_ context.Context, params store.AvailabilityCountParams) (int, error) {
+	memory.mutex.Lock()
+	defer memory.mutex.Unlock()
+	total := 0
+	for _, car := range memory.cars {
+		if _, ok := memory.searchMatch(car, params.Lat, params.Lng, params.RangeMeters, params.Start, params.End); !ok {
+			continue
+		}
+		total++
+		if total >= params.Cap {
+			break
+		}
+	}
+	return total, nil
+}
+
 func (memory *Store) Availability(_ context.Context, params store.AvailabilityParams) ([]store.AvailableCar, error) {
 	memory.mutex.Lock()
 	defer memory.mutex.Unlock()
 	var results []store.AvailableCar
 	tripHours := params.End.Sub(params.Start).Hours()
 	for _, car := range memory.cars {
-		if !car.IsListed {
-			continue
-		}
-		distance := store.DistanceMeters(params.Lat, params.Lng, car.Lat, car.Lng)
-		if distance > params.RangeMeters {
-			continue
-		}
-		if memory.carBlocked(car.ID, params.Start, params.End) {
+		distance, ok := memory.searchMatch(car, params.Lat, params.Lng, params.RangeMeters, params.Start, params.End)
+		if !ok {
 			continue
 		}
 		results = append(results, store.AvailableCar{

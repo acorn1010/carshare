@@ -605,6 +605,32 @@ func TestAvailabilitySortingAndFilters(t *testing.T) {
 		t.Fatalf("page 2 mismatch: %v", page2)
 	}
 
+	// The count answers the same question a page does, so it has to apply
+	// every exclusion the page applied: booked, held, unlisted, farAway and
+	// scheduled all stay out, leaving exactly the four cars that paged.
+	countParams := store.AvailabilityCountParams{
+		Lat: window.Lat, Lng: window.Lng, RangeMeters: window.RangeMeters,
+		Start: window.Start, End: window.End, Cap: 1001,
+	}
+	total, err := dataStore.AvailabilityCount(ctx, countParams)
+	if err != nil {
+		t.Fatalf("availability count: %v", err)
+	}
+	if total != len(wantIDs) {
+		t.Fatalf("count = %d, want %d (the cars that paged: %v)", total, len(wantIDs), wantIDs)
+	}
+
+	// The cap is the whole reason a count stays affordable in a dense city,
+	// so it has to actually stop: a cap under the real total reports the cap.
+	countParams.Cap = 2
+	capped, err := dataStore.AvailabilityCount(ctx, countParams)
+	if err != nil {
+		t.Fatalf("capped count: %v", err)
+	}
+	if capped != 2 {
+		t.Fatalf("capped count = %d, want it to stop at the cap of 2", capped)
+	}
+
 	// Distance sort takes the nearest-first early-exit SQL. pricey sits 0.001
 	// degrees of longitude away, the same degree distance as cheapNear's
 	// 0.001 degrees of latitude but fewer meters, so this only passes when
