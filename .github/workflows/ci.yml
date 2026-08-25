@@ -1,0 +1,58 @@
+# CI gates every push and PR: vet, race tests against a real Postgres with the
+# schema applied by psqldef (so schema drift fails here, not in production),
+# a schema idempotency check, and terraform validation.
+name: ci
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Start Postgres
+        run: |
+          docker run -d --name pgtest \
+            -e POSTGRES_PASSWORD=carshare \
+            -e POSTGRES_DB=carshare \
+            -p 5434:5432 postgres:16
+          for i in $(seq 1 30); do
+            docker exec pgtest pg_isready -U postgres && break
+            sleep 1
+          done
+
+      - name: Apply schema with psqldef, twice (second run must be a no-op)
+        run: |
+          ./db/update_schema.sh --apply
+          output=$(./db/update_schema.sh 2>/dev/null)
+          echo "${output}"
+          echo "${output}" | grep -q "Nothing is modified" || {
+            echo "schema.sql does not round-trip through psqldef" >&2
+            exit 1
+          }
+
+      - name: Vet and test (race, integration included)
+        env:
+          CARSHARE_TEST_DATABASE_URL: postgres://postgres:carshare@127.0.0.1:5434/carshare?sslmode=disable
+        run: |
+          go vet ./...
+          go test -race -count=1 ./...
+
+  terraform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - name: Validate
+        working-directory: terraform
+        run: |
+          terraform fmt -check -recursive
+          terraform init -backend=false
+          terraform validate
