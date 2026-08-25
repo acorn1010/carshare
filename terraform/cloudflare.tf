@@ -5,8 +5,8 @@
 resource "cloudflare_record" "api" {
   zone_id = var.cloudflare_zone_id
   name    = var.domain
-  type    = "A"
-  content = var.ingress_ip
+  type    = "CNAME"
+  content = var.ingress_target
   proxied = true
 }
 

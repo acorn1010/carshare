@@ -14,7 +14,8 @@ resource "kubernetes_secret_v1" "carshare" {
     namespace = kubernetes_namespace_v1.carshare.metadata[0].name
   }
   data = {
-    DATABASE_URL         = var.database_url
+    DATABASE_URL         = local.effective_database_url
+    POSTGRES_PASSWORD    = var.postgres_password
     GOOGLE_CLIENT_ID     = var.google_client_id
     GOOGLE_CLIENT_SECRET = var.google_client_secret
   }
@@ -122,8 +123,17 @@ resource "kubernetes_ingress_v1" "carshare" {
   metadata {
     name      = "carshare"
     namespace = kubernetes_namespace_v1.carshare.metadata[0].name
+    annotations = {
+      "cert-manager.io/cluster-issuer" = "letsencrypt-prod"
+      "kubernetes.io/tls-acme"         = "true"
+    }
   }
   spec {
+    ingress_class_name = "traefik"
+    tls {
+      hosts       = [var.domain]
+      secret_name = "${var.domain}-tls"
+    }
     rule {
       host = var.domain
       http {

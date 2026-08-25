@@ -18,8 +18,8 @@ variable "domain" {
   default     = "cars.foony.com"
 }
 
-variable "ingress_ip" {
-  description = "IPv4 of the cluster's ingress load balancer."
+variable "ingress_target" {
+  description = "Hostname of the cluster's public ingress, used as the CNAME target."
   type        = string
 }
 
@@ -53,9 +53,23 @@ variable "image_tag" {
 }
 
 variable "database_url" {
-  description = "Postgres connection string for the service."
+  description = "Postgres connection string for the service. Leave empty to run a single-pod Postgres inside the namespace, right for a demo, point it at managed Postgres for real load."
   type        = string
   sensitive   = true
+  default     = ""
+}
+
+variable "postgres_password" {
+  description = "Password for the in-namespace Postgres. Required when database_url is empty."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "postgres_storage_gi" {
+  description = "Disk for the in-namespace Postgres."
+  type        = number
+  default     = 20
 }
 
 variable "google_client_id" {

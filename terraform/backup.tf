@@ -8,7 +8,7 @@ resource "kubernetes_secret_v1" "backup" {
     namespace = kubernetes_namespace_v1.carshare.metadata[0].name
   }
   data = {
-    DATABASE_URL          = var.database_url
+    DATABASE_URL          = local.effective_database_url
     AWS_ACCESS_KEY_ID     = var.r2_access_key_id
     AWS_SECRET_ACCESS_KEY = var.r2_secret_access_key
   }
