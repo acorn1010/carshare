@@ -20,6 +20,7 @@ import (
 
 	"carshare/internal/auth"
 	"carshare/internal/config"
+	"carshare/internal/fleet"
 	"carshare/internal/httpapi"
 	"carshare/internal/logging"
 	"carshare/internal/metrics"
@@ -51,8 +52,18 @@ func main() {
 	registerPoolMetrics(dataStore)
 	go invariantLoop(rootCtx, dataStore, cfg.InvariantCheckInterval, logger)
 
+	// The fleet answers every search from memory, following cars.fleet_log
+	// on a short poll. Boot blocks on its first snapshot so the server never
+	// serves an empty fleet.
+	searchFleet, err := fleet.Start(rootCtx, dataStore.Pool(), nil)
+	if err != nil {
+		logger.Error("fleet", slog.String("error", err.Error()))
+		os.Exit(1)
+	}
+
 	server := httpapi.NewServer(httpapi.Params{
 		Store:                dataStore,
+		Search:               searchFleet,
 		Google:               googleProvider(logger),
 		SessionTTL:           30 * 24 * time.Hour,
 		HoldTTL:              cfg.HoldTTL,

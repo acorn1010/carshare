@@ -21,9 +21,8 @@ const (
 	maxTripDuration = 90 * 24 * time.Hour
 	// pastGrace forgives clock skew when a booking starts "now".
 	pastGrace = time.Minute
-	// searchFromHorizon is how far ahead availability will search. Bookings
-	// have no such product limit, but search windows feed cache keys, so
-	// unbounded dates would let anyone mint unlimited keys.
+	// searchFromHorizon is how far ahead availability will search. Nobody
+	// rents a year out, and a bound keeps search inputs finite.
 	searchFromHorizon = 365 * 24 * time.Hour
 	// maxPricePerHourCents caps the hourly rate at $500. Exotics on Turo top
 	// out near $150/hour, so anything above this is a typo like 1200 for $12.
@@ -180,9 +179,8 @@ func (server *Server) handleUpdateCar(writer http.ResponseWriter, request *http.
 // handleAvailability lists cars free for the whole window, closest first by
 // default, cheapest first with sort=price. The radius silently clamps to the
 // configured bounds, pages are 100 cars, and searches cap at 1,000 results.
-// Pages come from the snapped-and-cached search (searchcache.go); distances
-// in the response are recomputed from the exact search point, so the
-// snapping never shows through.
+// Answers come straight from params.Search, the in-memory fleet in
+// production, so they are exact and as fresh as the change feed.
 func (server *Server) handleAvailability(writer http.ResponseWriter, request *http.Request) {
 	query := request.URL.Query()
 	lat, latErr := strconv.ParseFloat(query.Get("lat"), 64)
@@ -198,8 +196,6 @@ func (server *Server) handleAvailability(writer http.ResponseWriter, request *ht
 		writeError(writer, http.StatusBadRequest, "bad_request", "duration must be between 15 minutes and 90 days")
 		return
 	}
-	// The horizon bounds the cache keyspace: without it, arbitrary far-future
-	// dates mint unlimited distinct cache keys and thrash the eviction cap.
 	if from.Before(time.Now().Add(-pastGrace)) || from.After(time.Now().Add(searchFromHorizon)) {
 		writeError(writer, http.StatusBadRequest, "bad_request", "from must be between now and a year out")
 		return
@@ -233,13 +229,10 @@ func (server *Server) handleAvailability(writer http.ResponseWriter, request *ht
 		return
 	}
 
-	snapped := snapSearch(lat, lng, rangeMeters, from, duration, sort, page)
-	cached, hit, err := server.searches.Do(request.Context(), snapped.key, func() ([]store.AvailableCar, error) {
-		return server.params.Store.Availability(request.Context(), store.AvailabilityParams{
-			Lat: snapped.lat, Lng: snapped.lng, RangeMeters: snapped.rangeMeters,
-			Start: snapped.start, End: snapped.end, Sort: sort,
-			Limit: pageSize, Offset: page * pageSize,
-		})
+	results, err := server.params.Search.Availability(request.Context(), store.AvailabilityParams{
+		Lat: lat, Lng: lng, RangeMeters: rangeMeters,
+		Start: from, End: from.Add(duration), Sort: sort,
+		Limit: pageSize, Offset: page * pageSize,
 	})
 	if err != nil {
 		slog.Error("availability", slog.String("error", err.Error()))
@@ -247,35 +240,22 @@ func (server *Server) handleAvailability(writer http.ResponseWriter, request *ht
 		writeStoreError(writer, err)
 		return
 	}
-	if hit {
-		metrics.SearchCacheTotal.WithLabelValues("hit").Inc()
-	} else {
-		metrics.SearchCacheTotal.WithLabelValues("miss").Inc()
-	}
-	results := personalizeSearch(cached, lat, lng, duration, sort)
 
-	// A short page already answers how many cars there are: everything skipped
-	// plus what came back. Only a page that filled needs the database to say
-	// what is past it, which is what keeps the count off the common path.
-	total := page*pageSize + len(cached)
+	// A short page already answers how many cars there are: everything
+	// skipped plus what came back. Only a full page needs a count of what is
+	// past it.
+	total := page*pageSize + len(results)
 	capped := false
-	if len(cached) == pageSize {
-		counted, countHit, countErr := server.counts.Do(request.Context(), snapped.countKey, func() (int, error) {
-			return server.params.Store.AvailabilityCount(request.Context(), store.AvailabilityCountParams{
-				Lat: snapped.lat, Lng: snapped.lng, RangeMeters: snapped.rangeMeters,
-				Start: snapped.start, End: snapped.end, Cap: countCap,
-			})
+	if len(results) == pageSize {
+		counted, countErr := server.params.Search.AvailabilityCount(request.Context(), store.AvailabilityCountParams{
+			Lat: lat, Lng: lng, RangeMeters: rangeMeters,
+			Start: from, End: from.Add(duration), Cap: countCap,
 		})
 		if countErr != nil {
 			slog.Error("availability count", slog.String("error", countErr.Error()))
 			metrics.ErrorsTotal.WithLabelValues("availability", "count").Inc()
 			writeStoreError(writer, countErr)
 			return
-		}
-		if countHit {
-			metrics.SearchCacheTotal.WithLabelValues("count_hit").Inc()
-		} else {
-			metrics.SearchCacheTotal.WithLabelValues("count_miss").Inc()
 		}
 		total = counted
 		if total >= countCap {

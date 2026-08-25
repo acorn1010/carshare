@@ -43,7 +43,9 @@ jobs:
           CARSHARE_TEST_DATABASE_URL: postgres://postgres:carshare@127.0.0.1:5434/carshare?sslmode=disable
         run: |
           go vet ./...
-          go test -race -count=1 ./...
+          # -p 1: the store and fleet packages rebuild the same database
+          # schema and must not run concurrently.
+          go test -race -count=1 -p 1 ./...
 
   terraform:
     runs-on: ubuntu-latest

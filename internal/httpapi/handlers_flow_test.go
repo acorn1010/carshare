@@ -13,7 +13,6 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -47,7 +46,8 @@ func newTestServer(t *testing.T) *httptest.Server {
 func newTestServerWithStore(t *testing.T, dataStore store.DataStore) *httptest.Server {
 	t.Helper()
 	server := httpapi.NewServer(httpapi.Params{
-		Store: dataStore,
+		Store:  dataStore,
+		Search: dataStore,
 		Google: fakeProvider{profiles: map[string]auth.Profile{
 			"code-owner":  {Sub: "sub-owner", Email: "owner@example.com", Name: "Owner"},
 			"code-renter": {Sub: "sub-renter", Email: "renter@example.com", Name: "Renter"},
@@ -408,25 +408,11 @@ func TestPublicCarDetails(t *testing.T) {
 	}
 }
 
-// countingStore wraps a store and counts Availability calls, so cache tests
-// can tell a database query from a cached page.
-type countingStore struct {
-	store.DataStore
-	availabilityCalls atomic.Int32
-}
-
-func (counting *countingStore) Availability(ctx context.Context, params store.AvailabilityParams) ([]store.AvailableCar, error) {
-	counting.availabilityCalls.Add(1)
-	return counting.DataStore.Availability(ctx, params)
-}
-
-// TestAvailabilityCachingAndDefaultSort proves three things over HTTP: the
-// default sort is closest-first, searchers in the same snap cell share one
-// store query, and cached pages still report distances measured from each
-// searcher's exact point.
-func TestAvailabilityCachingAndDefaultSort(t *testing.T) {
-	counting := &countingStore{DataStore: memstore.New()}
-	testServer := newTestServerWithStore(t, counting)
+// TestAvailabilityDefaultSortAndPrivacy proves the default sort is
+// closest-first, sort=price flips the leader, and a search row never says
+// who owns the car.
+func TestAvailabilityDefaultSortAndPrivacy(t *testing.T) {
+	testServer := newTestServerWithStore(t, memstore.New())
 	owner := signIn(t, testServer, "code-owner")
 
 	// A near expensive car and a far cheap one, both free for the window.
@@ -457,10 +443,14 @@ func TestAvailabilityCachingAndDefaultSort(t *testing.T) {
 	distanceOf := func(row any) float64 { return row.(map[string]any)["distance_meters"].(float64) }
 	priceOf := func(row any) int { return int(row.(map[string]any)["trip_price"].(float64)) }
 
-	// No sort parameter: closest first, so the pricey near car leads.
+	// No sort parameter: closest first, so the pricey near car leads, with
+	// its exact distance.
 	first := search(37.7701, -122.4199, "")
 	if len(first) != 2 || priceOf(first[0]) != 4000 {
 		t.Fatalf("default sort: want the near 4000-cent trip first, got %v", first)
+	}
+	if distanceOf(first[0]) <= 0 || distanceOf(first[0]) > 100 {
+		t.Fatalf("near car distance = %v, want a few meters", distanceOf(first[0]))
 	}
 	// Search is public, so a row must never say who owns the car.
 	for key := range first[0].(map[string]any) {
@@ -468,32 +458,10 @@ func TestAvailabilityCachingAndDefaultSort(t *testing.T) {
 			t.Fatalf("search row leaks %q", key)
 		}
 	}
-	if calls := counting.availabilityCalls.Load(); calls != 1 {
-		t.Fatalf("calls = %d, want 1", calls)
-	}
 
-	// Same snap cell, different exact point: no store query, distances
-	// recomputed for the new point.
-	second := search(37.7705, -122.4203, "")
-	if calls := counting.availabilityCalls.Load(); calls != 1 {
-		t.Fatalf("search in the same cell reached the store, calls = %d", calls)
-	}
-	if len(second) != 2 || distanceOf(first[0]) == distanceOf(second[0]) {
-		t.Fatalf("distance not personalized: %v then %v", distanceOf(first[0]), distanceOf(second[0]))
-	}
-
-	// Cheapest sort is its own cache key and leads with the cheap car.
+	// Cheapest sort leads with the cheap far car.
 	cheapest := search(37.7701, -122.4199, "price")
-	if calls := counting.availabilityCalls.Load(); calls != 2 {
-		t.Fatalf("price sort should miss the cache, calls = %d", calls)
-	}
 	if len(cheapest) != 2 || priceOf(cheapest[0]) != 1000 {
 		t.Fatalf("price sort: want the cheap 1000-cent trip first, got %v", cheapest)
-	}
-
-	// A search cells away misses too.
-	search(37.8000, -122.4200, "")
-	if calls := counting.availabilityCalls.Load(); calls != 3 {
-		t.Fatalf("distant search should miss, calls = %d", calls)
 	}
 }

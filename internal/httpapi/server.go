@@ -27,6 +27,9 @@ type Params struct {
 	// SearchRangeMinMeters and SearchRangeMaxMeters clamp availability radii.
 	SearchRangeMinMeters float64
 	SearchRangeMaxMeters float64
+	// Search answers availability queries: the in-memory fleet in
+	// production, the plain store in tests.
+	Search store.Searcher
 	// SecureCookies marks session cookies Secure. On in production, off for
 	// plain-http local runs.
 	SecureCookies bool
@@ -35,18 +38,11 @@ type Params struct {
 // Server holds the wired dependencies.
 type Server struct {
 	params Params
-	// searches caches one page each, counts cache one per whole search.
-	searches *searchCache[[]store.AvailableCar]
-	counts   *searchCache[int]
 }
 
 // NewServer wires the API.
 func NewServer(params Params) *Server {
-	return &Server{
-		params:   params,
-		searches: newSearchCache[[]store.AvailableCar](),
-		counts:   newSearchCache[int](),
-	}
+	return &Server{params: params}
 }
 
 // pageSize is the availability page size, and maxPages caps total results at
