@@ -96,7 +96,7 @@ const userKey contextKey = "user"
 // answers 401.
 func (server *Server) requireUser(next http.HandlerFunc) http.HandlerFunc {
 	return func(writer http.ResponseWriter, request *http.Request) {
-		token := bearerOrCookieToken(request)
+		token := server.bearerOrCookieToken(request)
 		if token == "" {
 			writeError(writer, http.StatusUnauthorized, "unauthenticated", "sign in first")
 			return
@@ -115,15 +115,26 @@ func currentUser(request *http.Request) store.User {
 	return user
 }
 
-// sessionCookieName is shared by the auth handlers and the middleware.
-const sessionCookieName = "carshare_session"
+// sessionCookieBase is the session cookie's name in plain-http dev.
+const sessionCookieBase = "carshare_session"
 
-func bearerOrCookieToken(request *http.Request) string {
+// sessionCookieName picks the session cookie's name. Production gets the
+// __Host- prefix, which a browser only accepts when the cookie is Secure,
+// Path=/, and domainless, so those three properties become enforced instead
+// of promised. Plain-http dev cannot carry the prefix.
+func (server *Server) sessionCookieName() string {
+	if server.params.SecureCookies {
+		return "__Host-" + sessionCookieBase
+	}
+	return sessionCookieBase
+}
+
+func (server *Server) bearerOrCookieToken(request *http.Request) string {
 	header := request.Header.Get("Authorization")
 	if len(header) > 7 && header[:7] == "Bearer " {
 		return header[7:]
 	}
-	if cookie, err := request.Cookie(sessionCookieName); err == nil {
+	if cookie, err := request.Cookie(server.sessionCookieName()); err == nil {
 		return cookie.Value
 	}
 	return ""

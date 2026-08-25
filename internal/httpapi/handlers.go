@@ -21,6 +21,10 @@ const (
 	maxTripDuration = 90 * 24 * time.Hour
 	// pastGrace forgives clock skew when a booking starts "now".
 	pastGrace = time.Minute
+	// searchFromHorizon is how far ahead availability will search. Bookings
+	// have no such product limit, but search windows feed cache keys, so
+	// unbounded dates would let anyone mint unlimited keys.
+	searchFromHorizon = 365 * 24 * time.Hour
 )
 
 // carResponse is the public JSON shape of a car.
@@ -108,15 +112,30 @@ func (server *Server) handleCreateCar(writer http.ResponseWriter, request *http.
 	writeJSON(writer, http.StatusCreated, toCarResponse(car))
 }
 
-// handleGetCar returns one car, which is how a client quotes the current
-// price before booking.
+// handleGetCar returns one listed car, which is how a client quotes the
+// current price before booking. The route is public, so the response is the
+// slim shape search uses: no owner_id (who owns a car is nobody's business),
+// no is_listed (always true here, the store hides hidden cars), coordinates
+// at 6 decimals.
 func (server *Server) handleGetCar(writer http.ResponseWriter, request *http.Request) {
 	car, err := server.params.Store.GetCar(request.Context(), request.PathValue("id"))
 	if err != nil {
 		writeStoreError(writer, err)
 		return
 	}
-	writeJSON(writer, http.StatusOK, toCarResponse(car))
+	type listedCarResponse struct {
+		ID           string  `json:"id"`
+		Model        string  `json:"model"`
+		ModelYear    *int    `json:"model_year,omitempty"`
+		Lat          float64 `json:"lat"`
+		Lng          float64 `json:"lng"`
+		PricePerHour int     `json:"price_per_hour"`
+	}
+	writeJSON(writer, http.StatusOK, listedCarResponse{
+		ID: car.ID, Model: car.Model, ModelYear: car.ModelYear,
+		Lat: math.Round(car.Lat*1e6) / 1e6, Lng: math.Round(car.Lng*1e6) / 1e6,
+		PricePerHour: car.PricePerHour,
+	})
 }
 
 // handleUpdateCar applies an owner's partial edit: price, location, or
@@ -173,6 +192,12 @@ func (server *Server) handleAvailability(writer http.ResponseWriter, request *ht
 		writeError(writer, http.StatusBadRequest, "bad_request", "duration must be between 15 minutes and 90 days")
 		return
 	}
+	// The horizon bounds the cache keyspace: without it, arbitrary far-future
+	// dates mint unlimited distinct cache keys and thrash the eviction cap.
+	if from.Before(time.Now().Add(-pastGrace)) || from.After(time.Now().Add(searchFromHorizon)) {
+		writeError(writer, http.StatusBadRequest, "bad_request", "from must be between now and a year out")
+		return
+	}
 	page := 0
 	if raw := query.Get("page"); raw != "" {
 		parsed, err := strconv.Atoi(raw)
@@ -185,7 +210,8 @@ func (server *Server) handleAvailability(writer http.ResponseWriter, request *ht
 	rangeMeters := server.params.SearchRangeMaxMeters
 	if raw := query.Get("range_meters"); raw != "" {
 		parsed, err := strconv.ParseFloat(raw, 64)
-		if err != nil {
+		// NaN would sail through the min/max clamp below, both propagate it.
+		if err != nil || math.IsNaN(parsed) {
 			writeError(writer, http.StatusBadRequest, "bad_request", "range_meters must be a number")
 			return
 		}

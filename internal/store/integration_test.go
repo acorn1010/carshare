@@ -564,6 +564,14 @@ func TestAvailabilitySortingAndFilters(t *testing.T) {
 		t.Fatalf("unlist: %v", err)
 	}
 
+	// GetCar backs the public car endpoint, so a hidden car must not resolve.
+	if _, err := dataStore.GetCar(ctx, unlisted.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("hidden car should be ErrNotFound, got %v", err)
+	}
+	if _, err := dataStore.GetCar(ctx, cheapNear.ID); err != nil {
+		t.Fatalf("listed car should resolve: %v", err)
+	}
+
 	results, err := dataStore.Availability(ctx, window)
 	if err != nil {
 		t.Fatalf("availability: %v", err)

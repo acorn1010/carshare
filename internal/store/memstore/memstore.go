@@ -144,7 +144,7 @@ func (memory *Store) GetCar(_ context.Context, carID string) (store.Car, error) 
 	memory.mutex.Lock()
 	defer memory.mutex.Unlock()
 	car, ok := memory.cars[carID]
-	if !ok {
+	if !ok || !car.IsListed {
 		return store.Car{}, store.ErrNotFound
 	}
 	return car, nil

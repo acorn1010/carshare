@@ -416,11 +416,14 @@ func (store *Store) UpdateCar(ctx context.Context, ownerID, carID string, patch 
 	return car, nil
 }
 
-// GetCar returns one car, listed or not.
+// GetCar returns one listed car. It backs the public car endpoint, so a car
+// the owner has hidden is not found: an id seen while a car was listed must
+// stop resolving the moment the owner hides it. Owners read their own cars,
+// hidden ones included, through CarsByOwner.
 func (store *Store) GetCar(ctx context.Context, carID string) (Car, error) {
 	row := store.pool.QueryRow(ctx, `
 		SELECT `+carColumns+`
-		FROM cars.cars WHERE id = $1`, carID)
+		FROM cars.cars WHERE id = $1 AND is_listed`, carID)
 	car, err := scanCar(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

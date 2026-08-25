@@ -61,7 +61,7 @@ func (server *Server) handleGoogleCallback(writer http.ResponseWriter, request *
 		return
 	}
 	http.SetCookie(writer, &http.Cookie{
-		Name: sessionCookieName, Value: rawToken, Path: "/",
+		Name: server.sessionCookieName(), Value: rawToken, Path: "/",
 		MaxAge:   int(server.params.SessionTTL.Seconds()),
 		HttpOnly: true, Secure: server.params.SecureCookies, SameSite: http.SameSiteLaxMode,
 	})
@@ -71,12 +71,12 @@ func (server *Server) handleGoogleCallback(writer http.ResponseWriter, request *
 }
 
 func (server *Server) handleLogout(writer http.ResponseWriter, request *http.Request) {
-	if token := bearerOrCookieToken(request); token != "" {
+	if token := server.bearerOrCookieToken(request); token != "" {
 		if err := server.params.Store.DeleteSession(request.Context(), auth.HashToken(token)); err != nil {
 			slog.Error("logout", slog.String("error", err.Error()))
 		}
 	}
-	http.SetCookie(writer, &http.Cookie{Name: sessionCookieName, Value: "", Path: "/", MaxAge: -1})
+	http.SetCookie(writer, &http.Cookie{Name: server.sessionCookieName(), Value: "", Path: "/", MaxAge: -1})
 	writer.WriteHeader(http.StatusNoContent)
 }
 

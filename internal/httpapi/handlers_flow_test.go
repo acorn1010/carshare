@@ -356,6 +356,56 @@ func TestValidationErrors(t *testing.T) {
 	if status, _ := doJSON(t, client, http.MethodGet, searchURL, nil); status != http.StatusBadRequest {
 		t.Errorf("page cap: status = %d, want 400", status)
 	}
+
+	// NaN would slip the radius clamp, min and max both propagate it.
+	nanURL := fmt.Sprintf("%s/v1/availability?lat=0&lng=0&from=%s&duration_minutes=60&range_meters=NaN",
+		testServer.URL, url.QueryEscape(time.Now().Add(time.Hour).UTC().Format(time.RFC3339)))
+	if status, _ := doJSON(t, client, http.MethodGet, nanURL, nil); status != http.StatusBadRequest {
+		t.Errorf("NaN radius: status = %d, want 400", status)
+	}
+
+	// Search windows past the horizon would mint unlimited cache keys.
+	farURL := fmt.Sprintf("%s/v1/availability?lat=0&lng=0&from=%s&duration_minutes=60",
+		testServer.URL, url.QueryEscape(time.Now().Add(2*365*24*time.Hour).UTC().Format(time.RFC3339)))
+	if status, _ := doJSON(t, client, http.MethodGet, farURL, nil); status != http.StatusBadRequest {
+		t.Errorf("far future search: status = %d, want 400", status)
+	}
+}
+
+// TestPublicCarDetails pins what the public car endpoint shares: the slim
+// search shape for a listed car, and a 404 the moment the owner hides it.
+func TestPublicCarDetails(t *testing.T) {
+	testServer := newTestServer(t)
+	owner := signIn(t, testServer, "code-owner")
+
+	status, created := doJSON(t, owner, http.MethodPost, testServer.URL+"/v1/cars",
+		map[string]any{"lat": 37.77, "lng": -122.42, "price_per_hour": 1500})
+	if status != http.StatusCreated {
+		t.Fatalf("create car = %d %v", status, created)
+	}
+	carID := created["id"].(string)
+
+	status, car := doJSON(t, http.DefaultClient, http.MethodGet, testServer.URL+"/v1/cars/"+carID, nil)
+	if status != http.StatusOK {
+		t.Fatalf("get car = %d %v", status, car)
+	}
+	for key := range car {
+		if key == "owner_id" || key == "is_listed" {
+			t.Fatalf("public car leaks %q", key)
+		}
+	}
+	if car["price_per_hour"].(float64) != 1500 {
+		t.Fatalf("price = %v, want 1500", car["price_per_hour"])
+	}
+
+	hidden := false
+	if status, body := doJSON(t, owner, http.MethodPatch, testServer.URL+"/v1/cars/"+carID,
+		map[string]any{"is_listed": hidden}); status != http.StatusOK {
+		t.Fatalf("hide car = %d %v", status, body)
+	}
+	if status, _ := doJSON(t, http.DefaultClient, http.MethodGet, testServer.URL+"/v1/cars/"+carID, nil); status != http.StatusNotFound {
+		t.Fatalf("hidden car should 404, got %d", status)
+	}
 }
 
 // countingStore wraps a store and counts Availability calls, so cache tests
