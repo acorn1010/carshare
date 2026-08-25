@@ -62,10 +62,10 @@ export function SearchPage({ me }: { readonly me: Me | null | 'loading' }) {
   return (
     <div>
       <section className="rounded-3xl bg-pine-800 px-6 py-10 sm:px-10 sm:py-14">
-        <h1 className="max-w-xl text-3xl font-extrabold tracking-tight text-paper-50 sm:text-5xl">
-          Rent a car by the hour, from people nearby.
+        <h1 className="text-center text-3xl font-extrabold tracking-tight text-paper-50 sm:text-5xl">
+          Rent a car, fast
         </h1>
-        <p className="pt-2 text-sm font-medium text-pine-200">
+        <p className="pt-2 text-center text-sm font-medium text-pine-200">
           Every price is locked when you book, and a booked hour can never be sold twice.
         </p>
         <div className="mt-6 flex flex-wrap items-end gap-x-5 gap-y-4 rounded-2xl bg-paper-50 p-4 shadow-sheet">

@@ -68,14 +68,25 @@ export function MapView({ cars, center, zoom = 13, onSelect, onPick, onMoved, pi
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Follow the center prop without tearing the map down, and without the
-  // programmatic jump counting as a user move.
+  // Follow the center prop without tearing the map down. Two guards keep the
+  // user in charge: the effect keys on the coordinates, not the array's
+  // identity (which changes every render and used to snap a dragged map
+  // back), and a no-op recenter is skipped so adopting the dragged center via
+  // Search this area leaves the view exactly where the user put it.
+  const centerLat = center[0];
+  const centerLng = center[1];
   useEffect(() => {
-    if (map.current) {
-      programmaticMove.current = true;
-      map.current.setView([center[0], center[1]], map.current.getZoom());
+    const current = map.current;
+    if (!current) {
+      return;
     }
-  }, [center]);
+    const at = current.getCenter();
+    if (Math.abs(at.lat - centerLat) < 1e-6 && Math.abs(at.lng - centerLng) < 1e-6) {
+      return;
+    }
+    programmaticMove.current = true;
+    current.setView([centerLat, centerLng], current.getZoom());
+  }, [centerLat, centerLng]);
 
   useEffect(() => {
     const group = layer.current;
