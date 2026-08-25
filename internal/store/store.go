@@ -490,6 +490,29 @@ func (store *Store) OrderCar(ctx context.Context, params OrderParams) (Reservati
 			}
 		}
 
+		if params.Kind == KindOwner {
+			var ownerID string
+			err := tx.QueryRow(ctx, `SELECT owner_id FROM cars.cars WHERE id = $1`, params.CarID).Scan(&ownerID)
+			if errors.Is(err, pgx.ErrNoRows) || (err == nil && ownerID != params.BookerID) {
+				return ErrNotFound
+			}
+			if err != nil {
+				return fmt.Errorf("owner check: %w", err)
+			}
+		}
+
+		// Serialize bookings per car. Exclusion constraints check conflicts
+		// by inserting then scanning, so two concurrent same-window inserts
+		// wait on each other and Postgres has to break the tie with a
+		// deadlock error (benchmarked: 4 qps and 40P01s under a pile-up on
+		// one car). With the per-car lock, writers on one car queue in order,
+		// the precheck below answers losers from the index in microseconds,
+		// and bookings on other cars are untouched.
+		if _, err := tx.Exec(ctx,
+			`SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))`, params.CarID); err != nil {
+			return fmt.Errorf("car lock: %w", err)
+		}
+
 		reaped, err := tx.Exec(ctx, `
 			DELETE FROM cars.reservations
 			WHERE car_id = $1 AND kind = 'rental_hold' AND status = 'confirmed' AND hold_expires_at <= now()`,
@@ -498,6 +521,23 @@ func (store *Store) OrderCar(ctx context.Context, params OrderParams) (Reservati
 			return fmt.Errorf("reap expired holds: %w", err)
 		}
 		metrics.HoldsExpiredTotal.Add(float64(reaped.RowsAffected()))
+
+		// Contention shedding, not correctness: answers doomed attempts from
+		// the index instead of letting them attempt the insert. The exclusion
+		// constraint below remains the only authority.
+		var blocked bool
+		if err := tx.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1 FROM cars.reservations
+				WHERE car_id = $1 AND status = 'confirmed'
+				  AND (hold_expires_at IS NULL OR hold_expires_at > now())
+				  AND during && tstzrange($2, $3)
+			)`, params.CarID, params.Start, params.End).Scan(&blocked); err != nil {
+			return fmt.Errorf("conflict precheck: %w", err)
+		}
+		if blocked {
+			return ErrConflict
+		}
 
 		tripHours := params.End.Sub(params.Start).Hours()
 		row := tx.QueryRow(ctx, `
