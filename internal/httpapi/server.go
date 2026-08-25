@@ -69,9 +69,10 @@ func (server *Server) Routes() http.Handler {
 	handle("POST /v1/auth/logout", server.handleLogout)
 	handle("GET /v1/me", server.requireUser(server.handleMe))
 
-	handle("GET /v1/availability", server.requireUser(server.handleAvailability))
+	// Browsing is public, like any marketplace. Booking needs a session.
+	handle("GET /v1/availability", server.handleAvailability)
+	handle("GET /v1/cars/{id}", server.handleGetCar)
 	handle("POST /v1/cars", server.requireUser(server.handleCreateCar))
-	handle("GET /v1/cars/{id}", server.requireUser(server.handleGetCar))
 	handle("PATCH /v1/cars/{id}", server.requireUser(server.handleUpdateCar))
 	handle("GET /v1/cars/{id}/calendar", server.requireUser(server.handleCarCalendar))
 	handle("POST /v1/reservations", server.requireUser(server.handleOrderCar))
