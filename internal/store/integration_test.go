@@ -596,6 +596,25 @@ func TestAvailabilitySortingAndFilters(t *testing.T) {
 	if len(page2) != 2 || page2[0].ID != pricey.ID || page2[1].ID != expiredHeld.ID {
 		t.Fatalf("page 2 mismatch: %v", page2)
 	}
+
+	// Distance sort takes the nearest-first early-exit SQL. pricey sits 0.001
+	// degrees of longitude away, the same degree distance as cheapNear's
+	// 0.001 degrees of latitude but fewer meters, so this only passes when
+	// the outer sort ranks by exact meters, not by the index's degree order.
+	window.Limit, window.Offset = 100, 0
+	window.Sort = "distance"
+	closest, err := dataStore.Availability(ctx, window)
+	if err != nil {
+		t.Fatalf("distance sort: %v", err)
+	}
+	gotIDs = gotIDs[:0]
+	for _, result := range closest {
+		gotIDs = append(gotIDs, result.ID)
+	}
+	wantIDs = []string{pricey.ID, cheapNear.ID, expiredHeld.ID, cheapFar.ID}
+	if fmt.Sprint(gotIDs) != fmt.Sprint(wantIDs) {
+		t.Fatalf("distance sort got %v\nwant %v", gotIDs, wantIDs)
+	}
 }
 
 func TestSessions(t *testing.T) {

@@ -185,8 +185,8 @@ type AvailabilityParams struct {
 	// Start and End are the trip window, half-open.
 	Start time.Time
 	End   time.Time
-	// Sort is "price" (cheapest trip first, the default) or "distance"
-	// (closest first). The other field breaks ties either way.
+	// Sort is "distance" (closest first, the handler's default) or "price"
+	// (cheapest trip first). The other field breaks ties either way.
 	Sort string
 	// Limit and Offset page the results.
 	Limit  int
@@ -459,27 +459,31 @@ func (store *Store) CarsByOwner(ctx context.Context, ownerID string) ([]Car, err
 
 // distanceMetersSQL approximates meters from degree deltas, scaling longitude
 // by cos(latitude). Good to well under 1% at city scale, which is all the
-// sort needs.
+// sort needs. Must stay in step with DistanceMeters below.
 const distanceMetersSQL = `111320 * sqrt(power(c.location[1] - $2, 2) + power((c.location[0] - $1) * cos(radians($2)), 2))`
 
-// Availability lists cars free for the whole window, cheapest trip first,
-// closest first on ties. The GiST circle filter is padded (longitude degrees
-// shrink with latitude) and the exact meter distance re-filters below it.
-func (store *Store) Availability(ctx context.Context, params AvailabilityParams) ([]AvailableCar, error) {
-	paddedRadiusDegrees := params.RangeMeters / (111320 * cosDegrees(params.Lat))
-	tripHours := params.End.Sub(params.Start).Hours()
-	orderBy := "trip_price, distance_meters"
-	if params.Sort == "distance" {
-		orderBy = "distance_meters, trip_price"
-	}
-	rows, err := store.pool.Query(ctx, `
+// DistanceMeters approximates meters between two points the same way the
+// search SQL does, so callers can recompute a result's distance for a nearby
+// origin without the answers drifting apart.
+func DistanceMeters(fromLat, fromLng, toLat, toLng float64) float64 {
+	latDelta := toLat - fromLat
+	lngDelta := (toLng - fromLng) * cosDegrees(fromLat)
+	return 111320 * math.Sqrt(latDelta*latDelta+lngDelta*lngDelta)
+}
+
+// availabilityFilterSQL is the shared body of both search shapes: listed cars
+// inside the padded circle, free of confirmed reservations and recurring
+// holds for the whole window. The padded circle over-admits east-west by up
+// to 1/cos(latitude); each shape trims to the exact meter radius itself,
+// because where that trim sits decides the query plan (see the distance
+// shape).
+const availabilityFilterSQL = `
 		SELECT c.id, c.owner_id, c.model, c.model_year, c.location[1], c.location[0], c.price_per_hour, c.is_listed, c.created_at, c.updated_at,
 		       round(c.price_per_hour * $6::float8)::int AS trip_price,
-		       `+distanceMetersSQL+` AS distance_meters
+		       ` + distanceMetersSQL + ` AS distance_meters
 		FROM cars.cars c
 		WHERE c.is_listed
 		  AND c.location <@ circle(point($1, $2), $3)
-		  AND `+distanceMetersSQL+` <= $4
 		  AND NOT EXISTS (
 		    SELECT 1 FROM cars.reservations r
 		    WHERE r.car_id = c.id AND r.status = 'confirmed'
@@ -490,9 +494,48 @@ func (store *Store) Availability(ctx context.Context, params AvailabilityParams)
 		    SELECT 1 FROM cars.recurrences rc
 		    WHERE rc.car_id = c.id AND rc.active
 		      AND cars.recurrence_overlaps(rc.first_occurrence, rc.period, rc.timezone, tstzrange($5, $7))
-		  )
-		ORDER BY `+orderBy+`, c.id
-		LIMIT $8 OFFSET $9`,
+		  )`
+
+// availabilityByPriceSQL must rank every car in the circle before it knows
+// the cheapest, so its cost grows with circle density.
+const availabilityByPriceSQL = availabilityFilterSQL + `
+		  AND ` + distanceMetersSQL + ` <= $4
+		ORDER BY trip_price, distance_meters, c.id
+		LIMIT $8 OFFSET $9`
+
+// availabilityByDistanceSQL streams candidates nearest-first out of the GiST
+// index and stops once the page is full, so dense cities cost the same as
+// sparse ones. Two traps shape it. The <-> operator orders by degrees, which
+// understates east-west meters by cos(latitude), so it over-fetches 2x
+// (enough through latitude 60) and the outer query ranks by exact meters.
+// And the meter radius trim must stay OUT of the subquery: as an opaque
+// expression the planner gives it fixed selectivity, the row estimate drops
+// under the LIMIT, and it swaps the ordered index scan for a
+// scan-everything-and-sort plan that is ~25x slower in a dense city. Trimming
+// outside can only shorten a page's tail, never lose a car: an in-radius row
+// keeps its position in the degree-ordered stream whichever page it falls on.
+const availabilityByDistanceSQL = `
+		SELECT * FROM (` + availabilityFilterSQL + `
+		ORDER BY c.location <-> point($1, $2)
+		LIMIT 2 * ($8::int + $9::int)
+		) sub
+		WHERE distance_meters <= $4
+		ORDER BY distance_meters, trip_price, id
+		LIMIT $8 OFFSET $9`
+
+// Availability lists cars free for the whole window. Sort "distance" (the
+// handler's default) walks the location index nearest-first and early-exits;
+// sort "price" ranks the whole circle cheapest-first. The GiST circle filter
+// is padded (longitude degrees shrink with latitude) and the exact meter
+// distance re-filters below it.
+func (store *Store) Availability(ctx context.Context, params AvailabilityParams) ([]AvailableCar, error) {
+	paddedRadiusDegrees := params.RangeMeters / (111320 * cosDegrees(params.Lat))
+	tripHours := params.End.Sub(params.Start).Hours()
+	query := availabilityByPriceSQL
+	if params.Sort == "distance" {
+		query = availabilityByDistanceSQL
+	}
+	rows, err := store.pool.Query(ctx, query,
 		params.Lng, params.Lat, paddedRadiusDegrees, params.RangeMeters,
 		params.Start, tripHours, params.End, params.Limit, params.Offset)
 	if err != nil {

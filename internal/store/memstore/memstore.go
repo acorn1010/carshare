@@ -159,7 +159,7 @@ func (memory *Store) Availability(_ context.Context, params store.AvailabilityPa
 		if !car.IsListed {
 			continue
 		}
-		distance := distanceMeters(params.Lat, params.Lng, car.Lat, car.Lng)
+		distance := store.DistanceMeters(params.Lat, params.Lng, car.Lat, car.Lng)
 		if distance > params.RangeMeters {
 			continue
 		}
@@ -410,10 +410,4 @@ func recurrenceOverlaps(recurrence store.Recurrence, start, end time.Time) bool 
 		}
 	}
 	return false
-}
-
-func distanceMeters(lat1, lng1, lat2, lng2 float64) float64 {
-	latDelta := lat2 - lat1
-	lngDelta := (lng2 - lng1) * math.Cos(lat1*math.Pi/180)
-	return 111320 * math.Sqrt(latDelta*latDelta+lngDelta*lngDelta)
 }
