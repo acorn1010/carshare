@@ -95,10 +95,12 @@ export const api = {
     durationMinutes: number;
     rangeMeters: number;
     sort: 'price' | 'distance';
+    page: number;
   }) =>
-    request<{ cars: AvailableCar[] }>(
+    request<{ cars: AvailableCar[]; page: number; total: number; capped: boolean }>(
       `/v1/availability?lat=${params.lat}&lng=${params.lng}&from=${encodeURIComponent(params.from.toISOString())}` +
-        `&duration_minutes=${params.durationMinutes}&range_meters=${params.rangeMeters}&sort=${params.sort}`,
+        `&duration_minutes=${params.durationMinutes}&range_meters=${params.rangeMeters}&sort=${params.sort}` +
+        `&page=${params.page}`,
     ),
 
   order: (body: {

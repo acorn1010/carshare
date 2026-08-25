@@ -4,7 +4,7 @@ import { CarPhoto } from './CarArt';
 import { RangePicker } from './RangePicker';
 import { distance, money } from './format';
 import { MapView } from './MapView';
-import { Plate, useToast } from './ui';
+import { Button, Plate, useToast } from './ui';
 import { BookingSheet } from './BookingSheet';
 
 /** The fleet spans the US, Japan, and Europe. These presets stand in for a
@@ -19,6 +19,10 @@ const PLACES = [
 ] as const;
 
 const SEARCH_RANGE_METERS = 14_000;
+
+/** Page size, mirrored from internal/httpapi/server.go. The response carries
+ * the match total, so the page count is read from that, never guessed. */
+const PAGE_SIZE = 100;
 
 function defaultStart(): Date {
   const tomorrow = new Date(Date.now() + 24 * 3600 * 1000);
@@ -37,6 +41,10 @@ export function SearchPage({ me }: { readonly me: Me | null | 'loading' }) {
   const [sort, setSort] = useState<'price' | 'distance'>('distance');
   const [movedCenter, setMovedCenter] = useState<{ lat: number; lng: number } | null>(null);
   const [cars, setCars] = useState<readonly AvailableCar[] | 'loading'>('loading');
+  const [page, setPage] = useState(0);
+  // total is how many cars match, capped says the real number is higher. The
+  // server stops counting at the last page it will serve, so "1,000+".
+  const [matches, setMatches] = useState<{ total: number; capped: boolean }>({ total: 0, capped: false });
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [heroCollapsed, setHeroCollapsed] = useState(false);
   const listPane = useRef<HTMLDivElement>(null);
@@ -44,18 +52,33 @@ export function SearchPage({ me }: { readonly me: Me | null | 'loading' }) {
 
   const durationMinutes = Math.max(15, Math.round((until.getTime() - from.getTime()) / 60_000));
 
-  const search = useCallback(() => {
+  // Deliberately not a dependency of the fetch: the page is an argument, so
+  // changing where or when only re-runs this from the first page.
+  const search = useCallback((atPage: number) => {
     setCars('loading');
+    setPage(atPage);
     api
-      .availability({ lat: place.lat, lng: place.lng, from, durationMinutes, rangeMeters: SEARCH_RANGE_METERS, sort })
-      .then((result) => setCars(result.cars))
+      .availability({ lat: place.lat, lng: place.lng, from, durationMinutes, rangeMeters: SEARCH_RANGE_METERS, sort, page: atPage })
+      .then((result) => {
+        setCars(result.cars);
+        setMatches({ total: result.total, capped: result.capped });
+      })
       .catch((error: Error) => {
         setCars([]);
+        setMatches({ total: 0, capped: false });
         show(error.message);
       });
   }, [place, from, durationMinutes, sort, show]);
 
-  useEffect(search, [search]);
+  useEffect(() => search(0), [search]);
+
+  // Paging keeps the window and the sort, and starts the list back at the top.
+  const goToPage = (next: number) => {
+    listPane.current?.scrollTo({ top: 0 });
+    search(next);
+  };
+
+  const pageCount = Math.ceil(matches.total / PAGE_SIZE);
 
   const selected = cars !== 'loading' ? cars.find((car) => car.id === selectedId) ?? null : null;
 
@@ -113,7 +136,7 @@ export function SearchPage({ me }: { readonly me: Me | null | 'loading' }) {
           />
           <button
             type="button"
-            onClick={search}
+            onClick={() => search(0)}
             aria-label="Search"
             className="ml-auto rounded-xl bg-pine-600 px-5 py-2.5 text-base font-extrabold text-paper-50 transition-colors duration-75 hover:bg-pine-700 active:bg-pine-800"
           >
@@ -143,7 +166,9 @@ export function SearchPage({ me }: { readonly me: Me | null | 'loading' }) {
             {cars === 'loading' ? (
               <p className="py-8 text-sm text-paper-600">Looking for free cars…</p>
             ) : cars.length === 0 ? (
-              <p className="py-8 text-sm text-paper-600">No cars free for that window. Try another time.</p>
+              <p className="py-8 text-sm text-paper-600">
+                {page === 0 ? 'No cars free for that window. Try another time.' : 'No more cars past this point.'}
+              </p>
             ) : (
               <ul className="flex flex-col gap-2">
                 {cars.map((car, index) => (
@@ -174,6 +199,24 @@ export function SearchPage({ me }: { readonly me: Me | null | 'loading' }) {
                 ))}
               </ul>
             )}
+            {/* `page > 0` keeps Previous reachable if cars get booked out from
+                under a deep page and the result set shrinks to one page. */}
+            {cars !== 'loading' && (page > 0 || pageCount > 1) ? (
+              <div className="mt-3 flex items-center justify-between gap-3">
+                <Button tone="ghost" disabled={page === 0} onClick={() => goToPage(page - 1)}>
+                  ← Previous
+                </Button>
+                <span className="text-center text-xs font-semibold text-paper-600">
+                  Page {page + 1} of {pageCount}
+                  <span className="block font-medium">
+                    {matches.capped ? `${matches.total.toLocaleString()}+` : matches.total.toLocaleString()} cars
+                  </span>
+                </span>
+                <Button tone="ghost" disabled={page + 1 >= pageCount} onClick={() => goToPage(page + 1)}>
+                  Next →
+                </Button>
+              </div>
+            ) : null}
             <p className="mt-4 border-t border-paper-300 py-4 text-xs text-paper-600">
               A demo of an open-source reservation engine. Double-booking is impossible by construction, try it: book
               the same car in two tabs.
@@ -219,10 +262,10 @@ export function SearchPage({ me }: { readonly me: Me | null | 'loading' }) {
           durationMinutes={durationMinutes}
           me={me}
           onClose={() => setSelectedId(null)}
-          onBooked={search}
+          onBooked={() => search(page)}
           onConflict={() => {
             show('Someone just took this slot', 'clay');
-            search();
+            search(page);
           }}
         />
       ) : null}
