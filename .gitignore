@@ -5,3 +5,4 @@ db/.psqldef
 .terraform.lock.hcl
 terraform.tfstate*
 *.tfvars
+/bench
