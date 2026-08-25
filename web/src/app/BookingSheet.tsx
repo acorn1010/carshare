@@ -71,8 +71,10 @@ export function BookingSheet({ car, from, durationMinutes, me, onClose, onBooked
   };
 
   return (
-    <div className="fixed inset-x-0 bottom-0 z-1000 flex justify-center px-4 pb-4">
-      <div className="animate-rise w-full max-w-xl rounded-2xl border border-paper-300 bg-paper-50 p-5 shadow-sheet motion-reduce:animate-none">
+    // The bar spans the viewport but the sheet inside is centered and capped,
+    // so the strips beside it would swallow clicks on the list underneath.
+    <div className="pointer-events-none fixed inset-x-0 bottom-0 z-1000 flex justify-center px-4 pb-4">
+      <div className="animate-rise pointer-events-auto w-full max-w-xl rounded-2xl border border-paper-300 bg-paper-50 p-5 shadow-sheet motion-reduce:animate-none">
         <div className="flex items-start gap-4">
           <CarPhoto model={car.model} carId={car.id} className="h-16 w-24 shrink-0 rounded-lg" />
           <div className="min-w-0">
