@@ -185,6 +185,9 @@ type AvailabilityParams struct {
 	// Start and End are the trip window, half-open.
 	Start time.Time
 	End   time.Time
+	// Sort is "price" (cheapest trip first, the default) or "distance"
+	// (closest first). The other field breaks ties either way.
+	Sort string
 	// Limit and Offset page the results.
 	Limit  int
 	Offset int
@@ -465,6 +468,10 @@ const distanceMetersSQL = `111320 * sqrt(power(c.location[1] - $2, 2) + power((c
 func (store *Store) Availability(ctx context.Context, params AvailabilityParams) ([]AvailableCar, error) {
 	paddedRadiusDegrees := params.RangeMeters / (111320 * cosDegrees(params.Lat))
 	tripHours := params.End.Sub(params.Start).Hours()
+	orderBy := "trip_price, distance_meters"
+	if params.Sort == "distance" {
+		orderBy = "distance_meters, trip_price"
+	}
 	rows, err := store.pool.Query(ctx, `
 		SELECT c.id, c.owner_id, c.model, c.model_year, c.location[1], c.location[0], c.price_per_hour, c.is_listed, c.created_at, c.updated_at,
 		       round(c.price_per_hour * $6::float8)::int AS trip_price,
@@ -484,7 +491,7 @@ func (store *Store) Availability(ctx context.Context, params AvailabilityParams)
 		    WHERE rc.car_id = c.id AND rc.active
 		      AND cars.recurrence_overlaps(rc.first_occurrence, rc.period, rc.timezone, tstzrange($5, $7))
 		  )
-		ORDER BY trip_price, distance_meters, c.id
+		ORDER BY `+orderBy+`, c.id
 		LIMIT $8 OFFSET $9`,
 		params.Lng, params.Lat, paddedRadiusDegrees, params.RangeMeters,
 		params.Start, tripHours, params.End, params.Limit, params.Offset)

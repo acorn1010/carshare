@@ -173,13 +173,20 @@ func (memory *Store) Availability(_ context.Context, params store.AvailabilityPa
 		})
 	}
 	sort.Slice(results, func(i, j int) bool {
-		if results[i].TripPrice != results[j].TripPrice {
-			return results[i].TripPrice < results[j].TripPrice
+		first, second := results[i], results[j]
+		if params.Sort == "distance" {
+			if first.DistanceMeters != second.DistanceMeters {
+				return first.DistanceMeters < second.DistanceMeters
+			}
+			return first.TripPrice < second.TripPrice
 		}
-		if results[i].DistanceMeters != results[j].DistanceMeters {
-			return results[i].DistanceMeters < results[j].DistanceMeters
+		if first.TripPrice != second.TripPrice {
+			return first.TripPrice < second.TripPrice
 		}
-		return results[i].ID < results[j].ID
+		if first.DistanceMeters != second.DistanceMeters {
+			return first.DistanceMeters < second.DistanceMeters
+		}
+		return first.ID < second.ID
 	})
 	if params.Offset >= len(results) {
 		return nil, nil

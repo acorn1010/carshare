@@ -188,10 +188,18 @@ func (server *Server) handleAvailability(writer http.ResponseWriter, request *ht
 		rangeMeters = parsed
 	}
 	rangeMeters = min(max(rangeMeters, server.params.SearchRangeMinMeters), server.params.SearchRangeMaxMeters)
+	sort := query.Get("sort")
+	if sort == "" {
+		sort = "price"
+	}
+	if sort != "price" && sort != "distance" {
+		writeError(writer, http.StatusBadRequest, "bad_request", "sort must be price or distance")
+		return
+	}
 
 	results, err := server.params.Store.Availability(request.Context(), store.AvailabilityParams{
 		Lat: lat, Lng: lng, RangeMeters: rangeMeters,
-		Start: from, End: from.Add(duration),
+		Start: from, End: from.Add(duration), Sort: sort,
 		Limit: pageSize, Offset: page * pageSize,
 	})
 	if err != nil {
