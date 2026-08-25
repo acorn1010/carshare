@@ -8,7 +8,7 @@ A car-sharing marketplace. Owners list their cars, renters find and book them by
 
 - **API**: Go stdlib HTTP, Google OAuth sign-in, JSON everywhere
 - **Storage**: a single Postgres with the entire booking-correctness story in the schema
-- **Measured**: ~2,800 searches/s and ~4,000 bookings/s on one box, uncached, before the search cache makes read load stop scaling with users at all
+- **Measured**: search runs at ~44,000 requests/s on a busy area (2,200/s worst case with the cache defeated) and bookings at ~4,000/s, one API pod, one Postgres
 - **Deploys**: container image on every push, Terraform for Cloudflare and Kubernetes
 - **Operations**: Prometheus metrics, alert rules in the repo, nightly dumps to R2, a restore drill that has actually been run
 
@@ -145,7 +145,7 @@ Then point `DATABASE_URL` at the restored database and roll the pods. Practice q
 
 ## Benchmarks
 
-Measured, not estimated: [BENCHMARKS.md](BENCHMARKS.md) runs the store at 1k, 100k, 1M, and 10M cars. Short version: booking throughput is flat (~4-5,000/s on one Postgres, p50 ~7ms) no matter the fleet size because the write path is per-car index work, and a single contended car serializes at ~1,200 bookings/s on its advisory lock. Search is its own story: closest-first streams from the location index and holds **~2,760 searches/s at p50 8.7ms** on a 400k-car fleet with 26,000 cars in the circle, where rank-everything-by-price manages 52/s, and the 30-second snapped cache on top bounds database load by busy map cells instead of user traffic. The two war stories in there, the write-contention deadlocks and the query-planner fight that search win required, are the best fifteen minutes in this repo.
+Measured, not estimated: [BENCHMARKS.md](BENCHMARKS.md) runs the store at 1k, 100k, 1M, and 10M cars. Short version: booking throughput is flat (~4-5,000/s on one Postgres, p50 ~7ms) no matter the fleet size because the write path is per-car index work, and a single contended car serializes at ~1,200 bookings/s on its advisory lock. Search is its own story: it started at 52/s and ends at **~44,100 requests/s** through the real HTTP binary, via closest-first streaming from the location index (8.7ms for one uncached dense-city query) and a 30-second snapped cache that bounds database load by busy map cells instead of user traffic. The two war stories in there, the write-contention deadlocks and the query-planner fight that search win required, are the best fifteen minutes in this repo.
 
 ## Change data capture
 
