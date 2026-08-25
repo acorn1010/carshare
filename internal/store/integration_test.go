@@ -479,6 +479,41 @@ func TestCancelRules(t *testing.T) {
 	}
 }
 
+// TestFractionalHourPricing pins the float cast in the trip price SQL.
+// Without the explicit ::float8, Postgres inferred the hours parameter as an
+// integer and floored it, which billed 90 minutes as 1 hour and 30 minutes as
+// free.
+func TestFractionalHourPricing(t *testing.T) {
+	dataStore := newStore(t)
+	ctx := context.Background()
+	owner := newUser(t, dataStore, "owner")
+	renter := newUser(t, dataStore, "renter")
+	car := newCar(t, dataStore, owner.ID, 37.77, -122.42, 700)
+	start := baseTime()
+
+	results, err := dataStore.Availability(ctx, store.AvailabilityParams{
+		Lat: 37.77, Lng: -122.42, RangeMeters: 5000,
+		Start: start, End: start.Add(30 * time.Minute), Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("availability: %v", err)
+	}
+	if len(results) != 1 || results[0].TripPrice != 350 {
+		t.Fatalf("30 minutes at 700/h priced %v, want 350", results)
+	}
+
+	booked, err := dataStore.OrderCar(ctx, store.OrderParams{
+		CarID: car.ID, BookerID: renter.ID, Kind: store.KindRental,
+		Start: start, End: start.Add(90 * time.Minute), MaxPrice: 1050,
+	})
+	if err != nil {
+		t.Fatalf("book 90 minutes: %v", err)
+	}
+	if booked.Price == nil || *booked.Price != 1050 {
+		t.Fatalf("90 minutes at 700/h froze %v, want 1050", booked.Price)
+	}
+}
+
 func TestAvailabilitySortingAndFilters(t *testing.T) {
 	dataStore := newStore(t)
 	ctx := context.Background()

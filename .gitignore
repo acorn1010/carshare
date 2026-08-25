@@ -6,3 +6,4 @@ db/.psqldef
 terraform.tfstate*
 *.tfvars
 /bench
+/cmd/seed/data/

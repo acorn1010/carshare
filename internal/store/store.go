@@ -467,7 +467,7 @@ func (store *Store) Availability(ctx context.Context, params AvailabilityParams)
 	tripHours := params.End.Sub(params.Start).Hours()
 	rows, err := store.pool.Query(ctx, `
 		SELECT c.id, c.owner_id, c.model, c.model_year, c.location[1], c.location[0], c.price_per_hour, c.is_listed, c.created_at, c.updated_at,
-		       round(c.price_per_hour * $6)::int AS trip_price,
+		       round(c.price_per_hour * $6::float8)::int AS trip_price,
 		       `+distanceMetersSQL+` AS distance_meters
 		FROM cars.cars c
 		WHERE c.is_listed
@@ -588,13 +588,13 @@ func (store *Store) OrderCar(ctx context.Context, params OrderParams) (Reservati
 		row := tx.QueryRow(ctx, `
 			INSERT INTO cars.reservations (car_id, booker_id, kind, during, price, hold_expires_at, idempotency_key)
 			SELECT c.id, $2, $3, tstzrange($4, $5),
-			       CASE WHEN $3 = 'owner' THEN NULL ELSE round(c.price_per_hour * $6)::int END,
+			       CASE WHEN $3 = 'owner' THEN NULL ELSE round(c.price_per_hour * $6::float8)::int END,
 			       CASE WHEN $3 = 'rental_hold' THEN now() + make_interval(secs => $7) ELSE NULL END,
 			       nullif($8, '')
 			FROM cars.cars c
 			WHERE c.id = $1
 			  AND (($3 = 'owner' AND c.owner_id = $2) OR ($3 <> 'owner' AND c.is_listed))
-			  AND ($3 = 'owner' OR round(c.price_per_hour * $6)::int <= $9)
+			  AND ($3 = 'owner' OR round(c.price_per_hour * $6::float8)::int <= $9)
 			  AND ($3 = 'owner' OR NOT EXISTS (
 			    SELECT 1 FROM cars.recurrences r
 			    WHERE r.car_id = c.id AND r.active
