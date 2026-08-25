@@ -1,10 +1,10 @@
 # Carshare
 
-A car-sharing marketplace. Owners list their cars, renters find and book them by the hour. Think Airbnb for cars, running a worldwide fleet (the demo seeds 725k cars across the US, Japan, and Europe, never in water) on boring, provable technology: Go, Postgres, and one exclusion constraint that makes double-booking impossible.
+A car-sharing marketplace. Owners list their cars, renters find and book them by the hour. Think Airbnb for cars, built on Go, Postgres, and one exclusion constraint that makes double-booking impossible. The demo seeds 725k cars across the US, Japan, and Europe.
 
-**Live demo: [cars.foony.com](https://cars.foony.com)** — open it in two tabs and race for the same car. One tab books, the other gets JUST TAKEN, and that is the whole design in one interaction. The exhibit is the reservation engine underneath; the site is its shop window.
+**Live demo: [cars.foony.com](https://cars.foony.com)** — open it in two tabs and race for the same car. One tab books, the other gets JUST TAKEN. That race is the whole design in one interaction.
 
-**Ninety seconds, in reading order:** race the two tabs, then read [the one constraint](db/schema.sql) that makes the loser inevitable (`cars_reservations_no_overlap`), then the two war stories in [BENCHMARKS.md](BENCHMARKS.md) — write contention taken from 4 to ~1,200 bookings/s, and search from 462ms to 8.7ms by letting the index stream. Everything below is commentary on those three things.
+**Ninety seconds, in reading order:** race the two tabs, then read [the one constraint](db/schema.sql) that makes the loser inevitable (`cars_reservations_no_overlap`), then the two war stories in [BENCHMARKS.md](BENCHMARKS.md) — write contention taken from 4 to ~1,200 bookings/s, and search from 462ms to 8.7ms by letting the index stream.
 
 - **API**: Go stdlib HTTP, Google OAuth sign-in, JSON everywhere
 - **Storage**: a single Postgres with the entire booking-correctness story in the schema
@@ -21,7 +21,7 @@ make test-sql                  # everything, including the concurrency suite
 make run                       # API on :3000, metrics on :9090
 ```
 
-Sign-in needs Google OAuth credentials (`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `OAUTH_REDIRECT_URL`). Without them the service still runs, auth routes are just absent, which is handy for local poking: mint a session row directly and pass it as a bearer token.
+Sign-in needs Google OAuth credentials (`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `OAUTH_REDIRECT_URL`). Without them the service still runs, just without auth routes. For local testing, mint a session row directly and pass it as a bearer token.
 
 ## Architecture
 
@@ -61,7 +61,7 @@ Errors come back as `{"error":{"code","message"}}` with stable codes (`conflict`
 
 Six tables in a `cars` Postgres schema (see [db/schema.sql](db/schema.sql)): `users`, `identities`, `sessions`, `cars`, `reservations`, `recurrences`.
 
-**Logins are a separate `identities` table**, keyed `(provider, subject)`, not a `google_sub` column on users. The provider's stable subject id (OIDC `sub`) is the identity key, never the email, because emails change and forking an account on an email change loses the user their cars and bookings. The split means one account can hold a Google and a GitHub login at once, and adding a provider is a new row shape, not a users migration.
+**Logins are a separate `identities` table**, keyed `(provider, subject)`, not a `google_sub` column on users. The key is the provider's stable subject id, never the email, because emails change. Adding a second login provider is a new row, not a users migration.
 
 **One exclusion constraint is the whole double-booking story.**
 
@@ -71,8 +71,6 @@ CONSTRAINT cars_reservations_no_overlap
 ```
 
 Two confirmed reservations for the same car can never overlap in time. Not "the app checks first", the database physically refuses the second row, under any concurrency, at any isolation level. Ranges are half-open `[start, end)`, so back-to-back bookings like 1-2pm and 2-3pm never touch.
-
-**`uuid` primary keys, no prefixes.** Postgres's `uuid` type is a fixed 128-bit value, it cannot carry a `car-` prefix. If you want prefixed ids in an API response, prepend them in the app. We keep raw uuids.
 
 **Locations are the built-in `point` type with a GiST index**, not PostGIS. PostGIS is the right answer for real geography, but for "cars near a point, closest first" the built-in type already gives an indexed radius filter (`location <@ circle(...)`) and exact-enough distances (longitude scaled by cos(latitude), well under 1% error at search-circle sizes). One less extension to operate.
 
@@ -92,7 +90,7 @@ Every mutation is either one conditional SQL statement or a short transaction en
 
 **Owner schedules vs renter bookings.** The rule: reservations always beat recurrences. A booking checks the recurrences visible at its snapshot. If the owner schedules concurrently, the booking stands and the owner misses that occurrence, which is exactly the product behavior we want, so `scheduleCar` needs no conflict check at all and the race disappears by design.
 
-**Cancellation.** One conditional `UPDATE`: yours, still confirmed, and either a hold, more than 24 hours before start, or within one hour of booking. That matches the marketplace standard (Turo and Getaround both draw the free line at 24 hours with a booking-time grace hour; both charge instead of refusing inside it, the natural extension once payments exist). Cancelled rows drop out of the exclusion constraint so the slot frees instantly.
+**Cancellation.** One conditional `UPDATE`: yours, still confirmed, and either a hold, more than 24 hours before start, or within one hour of booking. Cancelled rows drop out of the exclusion constraint so the slot frees instantly.
 
 ## Recurring owner holds
 
@@ -112,7 +110,7 @@ Everything is Prometheus, prefix `carshare_`:
 - `carshare_errors_total{component,kind}`: internal failures, labeled by the broken part
 - `carshare_double_booked_pairs`: **the invariant gauge**. A background loop counts overlapping confirmed pairs among current and future reservations. The constraint guarantees correctness; the gauge catches what the constraint cannot survive, a migration dropping it or a bad restore. Its alert is critical with `for: 0m`
 
-Alert rules ship in [terraform/monitoring.tf](terraform/monitoring.tf): down, error rate at two severities, p95 latency, pool saturation, HPA pinned at max, stale backup, and the double-booking invariant. Two cluster-level dependencies to check before trusting any of it: Alertmanager must have real receivers configured (rules that fire into a void are decoration), and the external Cloudflare health check in [terraform/cloudflare.tf](terraform/cloudflare.tf) covers what in-cluster metrics cannot see: DNS, TLS, and the path into the cluster.
+Alert rules ship in [terraform/monitoring.tf](terraform/monitoring.tf): down, error rate at two severities, p95 latency, pool saturation, HPA pinned at max, stale backup, and the double-booking invariant. Two things to check before trusting any of it: Alertmanager needs real receivers, and the external Cloudflare health check in [terraform/cloudflare.tf](terraform/cloudflare.tf) covers what in-cluster metrics cannot see: DNS, TLS, and the path into the cluster.
 
 ## Meeting an SLA
 
@@ -141,11 +139,11 @@ Then point `DATABASE_URL` at the restored database and roll the pods. Practice q
 2. `terraform apply` in [terraform/](terraform/) with your variables: Cloudflare DNS and health check for `cars.foony.com`, namespace, secrets, deployment, service, ingress, HPA, PDB, alert rules, and the backup CronJob. Secrets are variables with no defaults, nothing sensitive lives in the repo.
 3. Schema changes: edit `db/schema.sql` to the desired end state, `./db/update_schema.sh` to read the diff, `--apply` to apply, then roll the pods (drivers cache prepared statements per connection).
 
-**Why not GitOps here.** At fleet scale the image-tag write moves into a git repo and Argo CD reconciles it with auto-sync and self-heal; that is the right ladder rung when many services and environments need continuous convergence. For one service the machinery costs more than it saves, and the manual `terraform apply` buys something concrete for an open-source repo: **CI never holds a cluster credential**. GitHub Actions here can build and publish images but cannot touch Kubernetes, which is exactly the property Argo's pull model exists to provide, achieved at this scale by simply not automating the last step.
+**Why not GitOps here.** With many services, the image tag would move into a git repo and Argo CD would reconcile it. For one service that machinery costs more than it saves, and the manual `terraform apply` buys something concrete for an open-source repo: **CI never holds a cluster credential**. GitHub Actions can build and publish images but cannot touch Kubernetes, which is the same property Argo's pull model provides, achieved here by not automating the last step.
 
 ## Benchmarks
 
-Measured, not estimated: [BENCHMARKS.md](BENCHMARKS.md) runs the store at 1k, 100k, 1M, and 10M cars. Short version: booking throughput is flat (~4-5,000/s on one Postgres, p50 ~7ms) no matter the fleet size because the write path is per-car index work, and a single contended car serializes at ~1,200 bookings/s on its advisory lock. Search is its own story: it started at 52/s and ends at **~44,100 requests/s** through the real HTTP binary, via closest-first streaming from the location index (8.7ms for one uncached dense-city query) and a 30-second snapped cache that bounds database load by busy map cells instead of user traffic. The two war stories in there, the write-contention deadlocks and the query-planner fight that search win required, are the best fifteen minutes in this repo.
+Measured, not estimated: [BENCHMARKS.md](BENCHMARKS.md) runs the store at 1k, 100k, 1M, and 10M cars. Booking throughput is flat (~4-5,000/s on one Postgres, p50 ~7ms) no matter the fleet size, because the write path is per-car index work. A single contended car serializes at ~1,200 bookings/s on its advisory lock. Search started at 52/s and ends at **~44,100 requests/s** through the real HTTP binary: closest-first streaming from the location index (8.7ms for one uncached dense-city query), plus a 30-second snapped cache that bounds database load by busy map cells instead of user traffic. The two war stories in there, the write-contention deadlocks and the query-planner fight, are the best part of this repo.
 
 ## Change data capture
 
@@ -153,9 +151,9 @@ Every state transition here is a single-row write: booking is one `INSERT`, conf
 
 ## What changes at real scale
 
-Honest answers for the "what if it is 100M cars and 30k qps" question:
+Say the fleet grows to 100M cars and search traffic to 30k requests a second. What breaks, and what already holds:
 
-- **Reads first.** Already built: the [30-second snapped cache](internal/httpapi/searchcache.go) means search load is bounded by distinct busy cells per 30 seconds, not by users. 30k qps of searchers concentrated on a hundred hot neighborhoods is a few hundred database queries a minute.
+- **Reads first.** Already built: the [30-second snapped cache](internal/httpapi/searchcache.go) means search load is bounded by distinct busy cells per 30 seconds, not by users. 30k searches a second concentrated on a hundred hot neighborhoods is a few hundred database queries a minute.
 - **Shard by geography, not by a city id.** There is deliberately no city column anywhere, cars are bare coordinates and searches are lat/lng circles, so the shard key at extreme scale is the map itself: coarse regions sized so a max-radius circle almost always falls inside one shard. A circle that straddles a boundary fans out to the neighbor and merges two pages, a car whose owner moves it across a boundary is one row migration, and bookings shard perfectly because a reservation lives wherever its car does. Each shard is this exact system, small.
 - **The constraint scales with you.** The exclusion check is an index lookup on (car, time), it does not care how many other cars exist. Booking write volume per car is human-scale by definition.
 - **Global serving** is those geographic shards pinned to regional databases with anycast routing to the nearest region, not one worldwide database.
