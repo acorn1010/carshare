@@ -4,6 +4,12 @@ import { defineConfig } from 'astro/config';
 
 export default defineConfig({
   output: 'static',
+  // Cold navigations prefetch on hover, the same setting foony.io runs. Warm
+  // navigation never reloads at all, the shell swaps pages client-side.
+  prefetch: {
+    prefetchAll: true,
+    defaultStrategy: 'hover',
+  },
   integrations: [react()],
   vite: {
     plugins: [tailwindcss()],
