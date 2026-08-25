@@ -13,11 +13,13 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"carshare/internal/auth"
 	"carshare/internal/httpapi"
+	"carshare/internal/store"
 	"carshare/internal/store/memstore"
 )
 
@@ -39,8 +41,13 @@ func (provider fakeProvider) FetchProfile(_ context.Context, code string) (auth.
 
 func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
+	return newTestServerWithStore(t, memstore.New())
+}
+
+func newTestServerWithStore(t *testing.T, dataStore store.DataStore) *httptest.Server {
+	t.Helper()
 	server := httpapi.NewServer(httpapi.Params{
-		Store: memstore.New(),
+		Store: dataStore,
 		Google: fakeProvider{profiles: map[string]auth.Profile{
 			"code-owner":  {Sub: "sub-owner", Email: "owner@example.com", Name: "Owner"},
 			"code-renter": {Sub: "sub-renter", Email: "renter@example.com", Name: "Renter"},
@@ -348,5 +355,89 @@ func TestValidationErrors(t *testing.T) {
 		testServer.URL, url.QueryEscape(time.Now().Add(time.Hour).UTC().Format(time.RFC3339)))
 	if status, _ := doJSON(t, client, http.MethodGet, searchURL, nil); status != http.StatusBadRequest {
 		t.Errorf("page cap: status = %d, want 400", status)
+	}
+}
+
+// countingStore wraps a store and counts Availability calls, so cache tests
+// can tell a database query from a cached page.
+type countingStore struct {
+	store.DataStore
+	availabilityCalls atomic.Int32
+}
+
+func (counting *countingStore) Availability(ctx context.Context, params store.AvailabilityParams) ([]store.AvailableCar, error) {
+	counting.availabilityCalls.Add(1)
+	return counting.DataStore.Availability(ctx, params)
+}
+
+// TestAvailabilityCachingAndDefaultSort proves three things over HTTP: the
+// default sort is closest-first, searchers in the same snap cell share one
+// store query, and cached pages still report distances measured from each
+// searcher's exact point.
+func TestAvailabilityCachingAndDefaultSort(t *testing.T) {
+	counting := &countingStore{DataStore: memstore.New()}
+	testServer := newTestServerWithStore(t, counting)
+	owner := signIn(t, testServer, "code-owner")
+
+	// A near expensive car and a far cheap one, both free for the window.
+	for _, seed := range []map[string]any{
+		{"lat": 37.7702, "lng": -122.4200, "price_per_hour": 2000},
+		{"lat": 37.7900, "lng": -122.4200, "price_per_hour": 500},
+	} {
+		if status, body := doJSON(t, owner, http.MethodPost, testServer.URL+"/v1/cars", seed); status != http.StatusCreated {
+			t.Fatalf("create car = %d %v", status, body)
+		}
+	}
+
+	from := time.Now().Add(48 * time.Hour).Truncate(time.Minute).UTC()
+	search := func(lat, lng float64, sort string) []any {
+		t.Helper()
+		target := fmt.Sprintf("%s/v1/availability?lat=%.4f&lng=%.4f&from=%s&duration_minutes=120",
+			testServer.URL, lat, lng, url.QueryEscape(from.Format(time.RFC3339)))
+		if sort != "" {
+			target += "&sort=" + sort
+		}
+		status, body := doJSON(t, http.DefaultClient, http.MethodGet, target, nil)
+		if status != http.StatusOK {
+			t.Fatalf("availability = %d %v", status, body)
+		}
+		cars, _ := body["cars"].([]any)
+		return cars
+	}
+	distanceOf := func(row any) float64 { return row.(map[string]any)["distance_meters"].(float64) }
+	priceOf := func(row any) int { return int(row.(map[string]any)["trip_price"].(float64)) }
+
+	// No sort parameter: closest first, so the pricey near car leads.
+	first := search(37.7701, -122.4199, "")
+	if len(first) != 2 || priceOf(first[0]) != 4000 {
+		t.Fatalf("default sort: want the near 4000-cent trip first, got %v", first)
+	}
+	if calls := counting.availabilityCalls.Load(); calls != 1 {
+		t.Fatalf("calls = %d, want 1", calls)
+	}
+
+	// Same snap cell, different exact point: no store query, distances
+	// recomputed for the new point.
+	second := search(37.7705, -122.4203, "")
+	if calls := counting.availabilityCalls.Load(); calls != 1 {
+		t.Fatalf("search in the same cell reached the store, calls = %d", calls)
+	}
+	if len(second) != 2 || distanceOf(first[0]) == distanceOf(second[0]) {
+		t.Fatalf("distance not personalized: %v then %v", distanceOf(first[0]), distanceOf(second[0]))
+	}
+
+	// Cheapest sort is its own cache key and leads with the cheap car.
+	cheapest := search(37.7701, -122.4199, "price")
+	if calls := counting.availabilityCalls.Load(); calls != 2 {
+		t.Fatalf("price sort should miss the cache, calls = %d", calls)
+	}
+	if len(cheapest) != 2 || priceOf(cheapest[0]) != 1000 {
+		t.Fatalf("price sort: want the cheap 1000-cent trip first, got %v", cheapest)
+	}
+
+	// A search cells away misses too.
+	search(37.8000, -122.4200, "")
+	if calls := counting.availabilityCalls.Load(); calls != 3 {
+		t.Fatalf("distant search should miss, calls = %d", calls)
 	}
 }

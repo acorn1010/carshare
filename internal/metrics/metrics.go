@@ -50,6 +50,13 @@ var (
 		Name: "carshare_double_booked_pairs",
 		Help: "Pairs of confirmed reservations overlapping on the same car. Must always be zero.",
 	})
+
+	// SearchCacheTotal shows whether the availability cache is earning its
+	// keep: hit rate should climb with traffic in busy cells.
+	SearchCacheTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "carshare_search_cache_total",
+		Help: "Availability search cache lookups, labeled by result (hit, miss).",
+	}, []string{"result"})
 )
 
 // Handler exposes the default registry for the metrics listener.

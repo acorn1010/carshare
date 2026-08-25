@@ -34,12 +34,13 @@ type Params struct {
 
 // Server holds the wired dependencies.
 type Server struct {
-	params Params
+	params   Params
+	searches *searchCache
 }
 
 // NewServer wires the API.
 func NewServer(params Params) *Server {
-	return &Server{params: params}
+	return &Server{params: params, searches: newSearchCache()}
 }
 
 // pageSize is the availability page size, and maxPages caps total results at

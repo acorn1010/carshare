@@ -32,7 +32,7 @@ export function SearchPage({ me }: { readonly me: Me | null | 'loading' }) {
   const [place, setPlace] = useState<{ name: string; lat: number; lng: number }>(PLACES[0]);
   const [from, setFrom] = useState<Date>(defaultStart);
   const [until, setUntil] = useState<Date>(() => new Date(defaultStart().getTime() + 2 * 3600 * 1000));
-  const [sort, setSort] = useState<'price' | 'distance'>('price');
+  const [sort, setSort] = useState<'price' | 'distance'>('distance');
   const [movedCenter, setMovedCenter] = useState<{ lat: number; lng: number } | null>(null);
   const [cars, setCars] = useState<readonly AvailableCar[] | 'loading'>('loading');
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -93,7 +93,7 @@ export function SearchPage({ me }: { readonly me: Me | null | 'loading' }) {
         <div className="order-2 lg:order-1 lg:col-span-2">
           <div className="flex items-center gap-1 pb-3">
             <span className="pr-2 text-xs font-semibold uppercase tracking-wide text-paper-600">Sort</span>
-            {(['price', 'distance'] as const).map((option) => (
+            {(['distance', 'price'] as const).map((option) => (
               <button
                 key={option}
                 type="button"

@@ -151,9 +151,12 @@ func (server *Server) handleUpdateCar(writer http.ResponseWriter, request *http.
 	writeJSON(writer, http.StatusOK, toCarResponse(car))
 }
 
-// handleAvailability lists cars free for the whole window, cheapest trip
-// first, closest on ties. The radius silently clamps to the configured
-// bounds, pages are 100 cars, and searches cap at 1,000 results.
+// handleAvailability lists cars free for the whole window, closest first by
+// default, cheapest first with sort=price. The radius silently clamps to the
+// configured bounds, pages are 100 cars, and searches cap at 1,000 results.
+// Pages come from the snapped-and-cached search (searchcache.go); distances
+// in the response are recomputed from the exact search point, so the
+// snapping never shows through.
 func (server *Server) handleAvailability(writer http.ResponseWriter, request *http.Request) {
 	query := request.URL.Query()
 	lat, latErr := strconv.ParseFloat(query.Get("lat"), 64)
@@ -190,17 +193,20 @@ func (server *Server) handleAvailability(writer http.ResponseWriter, request *ht
 	rangeMeters = min(max(rangeMeters, server.params.SearchRangeMinMeters), server.params.SearchRangeMaxMeters)
 	sort := query.Get("sort")
 	if sort == "" {
-		sort = "price"
+		sort = "distance"
 	}
 	if sort != "price" && sort != "distance" {
 		writeError(writer, http.StatusBadRequest, "bad_request", "sort must be price or distance")
 		return
 	}
 
-	results, err := server.params.Store.Availability(request.Context(), store.AvailabilityParams{
-		Lat: lat, Lng: lng, RangeMeters: rangeMeters,
-		Start: from, End: from.Add(duration), Sort: sort,
-		Limit: pageSize, Offset: page * pageSize,
+	snapped := snapSearch(lat, lng, rangeMeters, from, duration, sort, page)
+	cached, hit, err := server.searches.Do(request.Context(), snapped.key, func() ([]store.AvailableCar, error) {
+		return server.params.Store.Availability(request.Context(), store.AvailabilityParams{
+			Lat: snapped.lat, Lng: snapped.lng, RangeMeters: snapped.rangeMeters,
+			Start: snapped.start, End: snapped.end, Sort: sort,
+			Limit: pageSize, Offset: page * pageSize,
+		})
 	})
 	if err != nil {
 		slog.Error("availability", slog.String("error", err.Error()))
@@ -208,6 +214,12 @@ func (server *Server) handleAvailability(writer http.ResponseWriter, request *ht
 		writeStoreError(writer, err)
 		return
 	}
+	if hit {
+		metrics.SearchCacheTotal.WithLabelValues("hit").Inc()
+	} else {
+		metrics.SearchCacheTotal.WithLabelValues("miss").Inc()
+	}
+	results := personalizeSearch(cached, lat, lng, duration, sort)
 
 	type availabilityItem struct {
 		carResponse
