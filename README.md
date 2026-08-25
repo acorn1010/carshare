@@ -137,6 +137,10 @@ Then point `DATABASE_URL` at the restored database and roll the pods. Practice q
 2. `terraform apply` in [terraform/](terraform/) with your variables: Cloudflare DNS and health check for `cars.foony.com`, namespace, secrets, deployment, service, ingress, HPA, PDB, alert rules, and the backup CronJob. Secrets are variables with no defaults, nothing sensitive lives in the repo.
 3. Schema changes: edit `db/schema.sql` to the desired end state, `./db/update_schema.sh` to read the diff, `--apply` to apply, then roll the pods (drivers cache prepared statements per connection).
 
+## Benchmarks
+
+Measured, not estimated: [BENCHMARKS.md](BENCHMARKS.md) runs the store at 1k, 100k, 1M, and 10M cars. Short version: booking throughput is flat (~4-5,000/s on one Postgres, p50 ~7ms) no matter the fleet size because the write path is per-car index work, a single contended car serializes at ~1,200 bookings/s on its advisory lock, and search cost tracks car density in the radius, not fleet size. The write-contention war story in there (exclusion-constraint pile-ups deadlock by design, fixed with a per-car advisory lock) is worth the read.
+
 ## What changes at real scale
 
 Honest answers for the "what if it is 100M cars and 30k qps" question, none of which this deployment needs yet:
