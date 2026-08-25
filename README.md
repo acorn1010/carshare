@@ -36,6 +36,8 @@ The frontend ([web/](web/)) is Astro + React + Tailwind on a Cloudflare Worker. 
 
 The API pods are stateless. All booking correctness lives in Postgres, so pods never coordinate with each other and you can add, kill, or roll them freely. At city scale (1M cars, tens of millions of reservations a year) one well-kept Postgres is nowhere near its limits.
 
+Search pages are cached in each pod for 30 seconds, snapped to a ~550m cell and a 15-minute window so nearby searchers share one database query ([the numbers](BENCHMARKS.md)). The deliberate trade: a car booked seconds ago can stay in search results for up to 30 seconds. Booking it returns the same JUST TAKEN conflict as the two-tab race, so the cache never touches correctness, only freshness.
+
 ## API
 
 All routes are JSON under `/v1`. Authentication is a session cookie set by Google sign-in, or the same token as `Authorization: Bearer <token>`.
@@ -50,7 +52,7 @@ All routes are JSON under `/v1`. Authentication is a session cookie set by Googl
 | `PATCH /v1/cars/{id}` | owner edits price, location, or `is_listed` |
 | `GET /v1/cars/{id}` | car details, used to quote a price before booking |
 | `GET /v1/cars/{id}/calendar?from&to` | owner's view: bookings plus recurring holds |
-| `GET /v1/availability?lat&lng&from&duration_minutes&range_meters&page` | cars free for the whole window, cheapest trip first, closest on ties. 100 per page, 1,000 results max |
+| `GET /v1/availability?lat&lng&from&duration_minutes&range_meters&sort&page` | cars free for the whole window, closest first by default, `sort=price` for cheapest trip first. 100 per page, 1,000 results max, pages cached ~30s |
 | `POST /v1/reservations` | book: `car_id`, `price` (the trip price you saw), `from`, `duration_minutes`, `kind` (`rental`, `rental_hold`, `owner`), optional `idempotency_key` |
 | `POST /v1/reservations/{id}/confirm` | turn a hold into a rental |
 | `DELETE /v1/reservations/{id}` | cancel: free up to 24h before start, or within 1h of booking (holds cancel any time) |
