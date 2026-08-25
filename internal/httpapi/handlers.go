@@ -28,6 +28,10 @@ type carResponse struct {
 	ID string `json:"id"`
 	// OwnerID is the listing user's uuid.
 	OwnerID string `json:"owner_id"`
+	// Model is make and model free text, like "Ford Mustang".
+	Model string `json:"model"`
+	// ModelYear is absent when the owner did not give one.
+	ModelYear *int `json:"model_year,omitempty"`
 	// Lat and Lng are the pickup point in degrees.
 	Lat float64 `json:"lat"`
 	Lng float64 `json:"lng"`
@@ -38,8 +42,8 @@ type carResponse struct {
 }
 
 func toCarResponse(car store.Car) carResponse {
-	return carResponse{ID: car.ID, OwnerID: car.OwnerID, Lat: car.Lat, Lng: car.Lng,
-		PricePerHour: car.PricePerHour, IsListed: car.IsListed}
+	return carResponse{ID: car.ID, OwnerID: car.OwnerID, Model: car.Model, ModelYear: car.ModelYear,
+		Lat: car.Lat, Lng: car.Lng, PricePerHour: car.PricePerHour, IsListed: car.IsListed}
 }
 
 // reservationResponse is the public JSON shape of a booking.
@@ -73,15 +77,28 @@ func (server *Server) handleCreateCar(writer http.ResponseWriter, request *http.
 		Lat          float64 `json:"lat"`
 		Lng          float64 `json:"lng"`
 		PricePerHour int     `json:"price_per_hour"`
+		Model        string  `json:"model"`
+		ModelYear    *int    `json:"model_year"`
 	}
 	if !decodeJSON(writer, request, &body) {
 		return
 	}
-	if !validCoordinates(body.Lat, body.Lng) || body.PricePerHour < 0 {
+	currentYear := time.Now().Year()
+	switch {
+	case !validCoordinates(body.Lat, body.Lng) || body.PricePerHour < 0:
 		writeError(writer, http.StatusBadRequest, "bad_request", "lat/lng out of range or negative price")
 		return
+	case len(body.Model) > 80:
+		writeError(writer, http.StatusBadRequest, "bad_request", "model is too long")
+		return
+	case body.ModelYear != nil && (*body.ModelYear < 1900 || *body.ModelYear > currentYear+1):
+		writeError(writer, http.StatusBadRequest, "bad_request", "model_year looks wrong")
+		return
 	}
-	car, err := server.params.Store.CreateCar(request.Context(), currentUser(request).ID, body.Lat, body.Lng, body.PricePerHour)
+	car, err := server.params.Store.CreateCar(request.Context(), currentUser(request).ID, store.NewCar{
+		Lat: body.Lat, Lng: body.Lng, PricePerHour: body.PricePerHour,
+		Model: body.Model, ModelYear: body.ModelYear,
+	})
 	if err != nil {
 		slog.Error("create car", slog.String("error", err.Error()))
 		writeStoreError(writer, err)

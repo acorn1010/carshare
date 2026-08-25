@@ -68,6 +68,10 @@ type Car struct {
 	ID string
 	// OwnerID is the user who listed the car.
 	OwnerID string
+	// Model is make and model as the owner wrote it, like "Ford Mustang".
+	Model string
+	// ModelYear is the model year, nil when the owner did not give one.
+	ModelYear *int
 	// Lat and Lng are the pickup point in degrees.
 	Lat float64
 	Lng float64
@@ -142,6 +146,19 @@ type Calendar struct {
 	Reservations []Reservation
 	// Recurrences are the car's active repeating holds.
 	Recurrences []Recurrence
+}
+
+// NewCar is a listing request.
+type NewCar struct {
+	// Lat and Lng are the pickup point in degrees.
+	Lat float64
+	Lng float64
+	// PricePerHour is the rate in cents.
+	PricePerHour int
+	// Model is make and model free text, like "Ford Mustang".
+	Model string
+	// ModelYear is optional.
+	ModelYear *int
 }
 
 // CarPatch is a partial car update. Nil fields are left unchanged.
@@ -219,7 +236,7 @@ type DataStore interface {
 	UserBySessionToken(ctx context.Context, tokenHash string) (User, error)
 	DeleteSession(ctx context.Context, tokenHash string) error
 
-	CreateCar(ctx context.Context, ownerID string, lat, lng float64, pricePerHour int) (Car, error)
+	CreateCar(ctx context.Context, ownerID string, params NewCar) (Car, error)
 	UpdateCar(ctx context.Context, ownerID, carID string, patch CarPatch) (Car, error)
 	GetCar(ctx context.Context, carID string) (Car, error)
 	CarsByOwner(ctx context.Context, ownerID string) ([]Car, error)
@@ -361,12 +378,12 @@ func (store *Store) DeleteSession(ctx context.Context, tokenHash string) error {
 }
 
 // CreateCar lists a car at (lat, lng) with a price in cents per hour.
-func (store *Store) CreateCar(ctx context.Context, ownerID string, lat, lng float64, pricePerHour int) (Car, error) {
+func (store *Store) CreateCar(ctx context.Context, ownerID string, params NewCar) (Car, error) {
 	row := store.pool.QueryRow(ctx, `
-		INSERT INTO cars.cars (owner_id, location, price_per_hour)
-		VALUES ($1, point($2, $3), $4)
-		RETURNING id, owner_id, location[1], location[0], price_per_hour, is_listed, created_at, updated_at`,
-		ownerID, lng, lat, pricePerHour)
+		INSERT INTO cars.cars (owner_id, location, price_per_hour, model, model_year)
+		VALUES ($1, point($2, $3), $4, $5, $6)
+		RETURNING `+carColumns,
+		ownerID, params.Lng, params.Lat, params.PricePerHour, params.Model, params.ModelYear)
 	car, err := scanCar(row)
 	if err != nil {
 		return Car{}, fmt.Errorf("store: create car: %w", err)
@@ -384,7 +401,7 @@ func (store *Store) UpdateCar(ctx context.Context, ownerID, carID string, patch 
 		    is_listed = COALESCE($6, is_listed),
 		    updated_at = now()
 		WHERE id = $1 AND owner_id = $2
-		RETURNING id, owner_id, location[1], location[0], price_per_hour, is_listed, created_at, updated_at`,
+		RETURNING `+carColumns,
 		carID, ownerID, patch.Lat, patch.Lng, patch.PricePerHour, patch.IsListed)
 	car, err := scanCar(row)
 	if err != nil {
@@ -399,7 +416,7 @@ func (store *Store) UpdateCar(ctx context.Context, ownerID, carID string, patch 
 // GetCar returns one car, listed or not.
 func (store *Store) GetCar(ctx context.Context, carID string) (Car, error) {
 	row := store.pool.QueryRow(ctx, `
-		SELECT id, owner_id, location[1], location[0], price_per_hour, is_listed, created_at, updated_at
+		SELECT `+carColumns+`
 		FROM cars.cars WHERE id = $1`, carID)
 	car, err := scanCar(row)
 	if err != nil {
@@ -414,7 +431,7 @@ func (store *Store) GetCar(ctx context.Context, carID string) (Car, error) {
 // CarsByOwner lists everything a host has listed, hidden cars included.
 func (store *Store) CarsByOwner(ctx context.Context, ownerID string) ([]Car, error) {
 	rows, err := store.pool.Query(ctx, `
-		SELECT id, owner_id, location[1], location[0], price_per_hour, is_listed, created_at, updated_at
+		SELECT `+carColumns+`
 		FROM cars.cars
 		WHERE owner_id = $1
 		ORDER BY created_at
@@ -449,7 +466,7 @@ func (store *Store) Availability(ctx context.Context, params AvailabilityParams)
 	paddedRadiusDegrees := params.RangeMeters / (111320 * cosDegrees(params.Lat))
 	tripHours := params.End.Sub(params.Start).Hours()
 	rows, err := store.pool.Query(ctx, `
-		SELECT c.id, c.owner_id, c.location[1], c.location[0], c.price_per_hour, c.is_listed, c.created_at, c.updated_at,
+		SELECT c.id, c.owner_id, c.model, c.model_year, c.location[1], c.location[0], c.price_per_hour, c.is_listed, c.created_at, c.updated_at,
 		       round(c.price_per_hour * $6)::int AS trip_price,
 		       `+distanceMetersSQL+` AS distance_meters
 		FROM cars.cars c
@@ -479,8 +496,9 @@ func (store *Store) Availability(ctx context.Context, params AvailabilityParams)
 	var results []AvailableCar
 	for rows.Next() {
 		var result AvailableCar
-		if err := rows.Scan(&result.ID, &result.OwnerID, &result.Lat, &result.Lng, &result.PricePerHour,
-			&result.IsListed, &result.CreatedAt, &result.UpdatedAt, &result.TripPrice, &result.DistanceMeters); err != nil {
+		if err := rows.Scan(&result.ID, &result.OwnerID, &result.Model, &result.ModelYear, &result.Lat, &result.Lng,
+			&result.PricePerHour, &result.IsListed, &result.CreatedAt, &result.UpdatedAt,
+			&result.TripPrice, &result.DistanceMeters); err != nil {
 			return nil, fmt.Errorf("store: availability scan: %w", err)
 		}
 		results = append(results, result)
@@ -859,9 +877,13 @@ func (store *Store) CountDoubleBookedPairs(ctx context.Context) (int, error) {
 	return count, nil
 }
 
+// carColumns is every cars.cars column scanCar expects, in scan order.
+const carColumns = `id, owner_id, model, model_year, location[1], location[0], price_per_hour, is_listed, created_at, updated_at`
+
 func scanCar(row pgx.Row) (Car, error) {
 	var car Car
-	err := row.Scan(&car.ID, &car.OwnerID, &car.Lat, &car.Lng, &car.PricePerHour, &car.IsListed, &car.CreatedAt, &car.UpdatedAt)
+	err := row.Scan(&car.ID, &car.OwnerID, &car.Model, &car.ModelYear, &car.Lat, &car.Lng,
+		&car.PricePerHour, &car.IsListed, &car.CreatedAt, &car.UpdatedAt)
 	return car, err
 }
 

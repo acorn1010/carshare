@@ -96,11 +96,12 @@ func (memory *Store) DeleteSession(_ context.Context, tokenHash string) error {
 	return nil
 }
 
-func (memory *Store) CreateCar(_ context.Context, ownerID string, lat, lng float64, pricePerHour int) (store.Car, error) {
+func (memory *Store) CreateCar(_ context.Context, ownerID string, params store.NewCar) (store.Car, error) {
 	memory.mutex.Lock()
 	defer memory.mutex.Unlock()
-	car := store.Car{ID: memory.newID("car"), OwnerID: ownerID, Lat: lat, Lng: lng,
-		PricePerHour: pricePerHour, IsListed: true, CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	car := store.Car{ID: memory.newID("car"), OwnerID: ownerID, Lat: params.Lat, Lng: params.Lng,
+		Model: params.Model, ModelYear: params.ModelYear, PricePerHour: params.PricePerHour,
+		IsListed: true, CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	memory.cars[car.ID] = car
 	return car, nil
 }

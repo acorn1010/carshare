@@ -38,7 +38,9 @@ func newUser(t *testing.T, dataStore *store.Store, name string) store.User {
 
 func newCar(t *testing.T, dataStore *store.Store, ownerID string, lat, lng float64, pricePerHour int) store.Car {
 	t.Helper()
-	car, err := dataStore.CreateCar(context.Background(), ownerID, lat, lng, pricePerHour)
+	car, err := dataStore.CreateCar(context.Background(), ownerID, store.NewCar{
+		Lat: lat, Lng: lng, PricePerHour: pricePerHour, Model: "Test Car",
+	})
 	if err != nil {
 		t.Fatalf("create car: %v", err)
 	}

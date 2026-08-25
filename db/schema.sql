@@ -75,6 +75,8 @@ CREATE INDEX cars_sessions_user_index ON cars.sessions USING btree (user_id);
 CREATE TABLE "cars"."cars" (
     "id" uuid NOT NULL DEFAULT gen_random_uuid(),
     "owner_id" uuid NOT NULL,
+    "model" text NOT NULL DEFAULT '',
+    "model_year" integer,
     "location" point NOT NULL,
     "price_per_hour" integer NOT NULL,
     "is_listed" boolean NOT NULL DEFAULT true,
@@ -151,6 +153,8 @@ COMMENT ON COLUMN "cars"."sessions"."created_at" IS 'When the session was minted
 COMMENT ON TABLE "cars"."cars" IS 'Listed vehicles. An owner is just a user with rows here.';
 COMMENT ON COLUMN "cars"."cars"."id" IS 'Random uuid.';
 COMMENT ON COLUMN "cars"."cars"."owner_id" IS 'User who owns and listed the car.';
+COMMENT ON COLUMN "cars"."cars"."model" IS 'Make and model as the owner wrote it, like Ford Mustang. Free text on purpose, a make/model taxonomy earns its keep only with search filters.';
+COMMENT ON COLUMN "cars"."cars"."model_year" IS 'Model year, if the owner gave one.';
 COMMENT ON COLUMN "cars"."cars"."location" IS 'Pickup point as (lng, lat) in degrees. Built-in point plus the GiST index gives indexed radius filtering and nearest-first ordering without PostGIS.';
 COMMENT ON COLUMN "cars"."cars"."price_per_hour" IS 'Rental price in cents per hour, set by the owner.';
 COMMENT ON COLUMN "cars"."cars"."is_listed" IS 'False hides the car from search. Existing reservations stay valid.';
