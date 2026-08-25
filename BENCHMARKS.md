@@ -2,52 +2,54 @@
 
 ## Where it stands today
 
-The current numbers, one API pod against a 400k-car fleet with 26,000 cars inside the search circle. Everything below this table is the method, the history, and the two war stories that produced them.
+Re-measured 2026-08-25 on one 24-core dev machine (WSL2, Postgres 16 in Docker, load generator on the same box). One API pod against a 400k-car fleet with ~26,000 cars inside a 10km Manhattan search circle, 30% of them busy over the searched window.
 
 | what | number | measured how |
 |---|---|---|
-| search, busy area (cache hit) | **44,100/s**, ~7ms | wrk against the real binary, ["The search war story"](#the-search-war-story) |
-| search, every request unique (cache defeated) | **2,240/s**, ~21ms | wrk, worst case, all traffic reaches Postgres |
-| one uncached search, dense NYC | **8.7ms p50** | the store's real SQL, 24 clients |
-| bookings, fleet-wide | **~4,000/s** | [cmd/bench](cmd/bench), any fleet size 1k to 10M |
-| bookings, one contended car | **~1,200/s** | the per-car serialization ceiling, by design |
-| where search started | 52/s | the rank-everything sort, same fleet, ["The search war story"](#the-search-war-story) |
+| search, busy area (cache hit) | **45,200/s**, ~6ms | `./scripts/bench.sh http`, hot scenario |
+| search, all cold cells (cache defeated) | **380-570/s** | same, spread and miss scenarios, see below |
+| store-level search, closest sort | **6,300-8,400 qps**, p50 3-4ms | `./scripts/bench.sh store`, 100k-1M fleets |
+| bookings, fleet-wide | **~4,500/s**, p50 ~7ms | same, any fleet size |
+| bookings, one contended car | **~1,100/s** | the per-car serialization ceiling, by design |
+| where search started | 52/s | the deleted rank-everything sort, ["The search war story"](#the-search-war-story) |
 
-All numbers come from one 24-core dev machine that also ran the load generator, so read them as conservative floors, and as ratios more than absolutes. Search capacity multiplies with pods (the cache is per pod), while Postgres only ever sees distinct search cells per 30 seconds, whatever the user count.
+The cold-cell number is the cost of a fill: a miss pays the page query (~9ms) plus the capped result count (~30ms), once per cell per 30 seconds. Real traffic concentrates in hot cells, so production sits near the top row, and search capacity multiplies with pods (the cache is per pod) while Postgres only ever sees distinct cells per TTL.
+
+Same machine ran the load generator, so read the absolutes as conservative floors and trust the ratios.
+
+## Reproduce
+
+```bash
+./scripts/bench.sh store            # store ceilings at 1k, 100k, and 1M cars
+./scripts/bench.sh store 10000000   # the 10M stress row, minutes of seeding
+./scripts/bench.sh http             # full-stack searches/s (needs wrk)
+```
+
+The script starts its own tuned Postgres 16 container (4GB shared_buffers) and removes it when done, so it never touches the dev database. `store` runs [cmd/bench](cmd/bench): server-side seeding, then 32 workers hammering each scenario through the real store code for 10s. It prints a `SELECT 1` ceiling first, because the fastest rows below are bounded by client round-trips, not by Postgres.
 
 ## Store-level results by fleet size
 
-Store-level throughput at four fleet sizes, measured with [cmd/bench](cmd/bench) against Postgres 16 in Docker (4GB shared_buffers, 24GB effective_cache_size) on a 24-core machine, 32 workers, 10s per scenario. All cars sit in one ~35x33km city so density grows with fleet size, which is the interesting variable. 20% of cars carry one future booking so search pays a realistic anti-join cost.
+Measured 2026-08-25, 32 workers, 2km radius, all cars in one ~35x33km city so density grows with fleet size. 20% of cars carry one future booking. The no-op ceiling on this box was 289k tps in-container.
 
-Reproduce with:
+| fleet | search (distance) | search (price) | result count | order, random cars | order, contended |
+|---|---|---|---|---|---|
+| 1k | 26,598 qps, p50 1.0ms | 27,039 qps, p50 1.0ms | 31,572 qps | 4,781 qps, p50 6.3ms | 1,119 qps, p50 28ms |
+| 100k | 8,377 qps, p50 3.4ms | 3,340 qps, p50 8.5ms | 3,712 qps | 4,704 qps, p50 6.5ms | 1,172 qps, p50 27ms |
+| 1M | 6,335 qps, p50 4.4ms | 560 qps, p50 52ms | 2,508 qps | 4,460 qps, p50 6.8ms | 1,080 qps, p50 30ms |
 
-```bash
-./scripts/dev_db.sh
-DATABASE_URL=postgres://postgres:carshare@127.0.0.1:5434/carshare?sslmode=disable \
-  go run ./cmd/bench -cars 1000000 -duration 10s -workers 32
-```
-
-These availability numbers price the old rank-everything cheapest sort, kept as the baseline the war stories start from.
-
-| fleet | availability (2km radius) | order, random cars | order, one contended car |
-|---|---|---|---|
-| 1k cars | 27,809 qps, p50 1.0ms | 4,867 qps, p50 6.2ms | 1,053 qps, p50 30ms |
-| 100k cars | 2,584 qps, p50 11ms | 4,594 qps, p50 6.6ms | 1,233 qps, p50 26ms |
-| 1M cars | 598 qps, p50 48ms | 4,853 qps, p50 6.3ms | 1,285 qps, p50 25ms |
-| 10M cars | 43 qps, p50 583ms | 4,042 qps, p50 7.3ms | 1,179 qps, p50 27ms |
-| 10M cars, 500m radius | 409 qps, p50 63ms | 3,281 qps | 708 qps |
+At 1k cars every query is sub-millisecond, so that row measures round-trip overhead and is best read as "faster than the harness can see". Earlier revisions of this table (including 10M-car runs against a query shape that no longer exists) are in git history.
 
 ## What the numbers say
 
-**Booking throughput does not care how big the fleet is.** ~4-5,000 bookings/s at 1k cars and still ~4,000/s at 10M, p50 ~7ms throughout. The whole write path is per-car index work: the advisory lock, the hold reap, the conflict precheck, and the exclusion check all touch one car's rows. Ten million other cars are invisible to it. For scale context, 4,000 bookings/s is ~350M bookings a day on one box.
+**Booking throughput does not care how big the fleet is.** ~4,500 bookings/s at every fleet size, p50 ~7ms throughout. The whole write path is per-car index work: the advisory lock, the hold reap, the conflict precheck, and the exclusion check all touch one car's rows. A million other cars are invisible to it. For scale context, 4,500 bookings/s is ~390M bookings a day on one box.
 
-**One contended car serializes at ~1,200 bookings/s.** That is the per-car ceiling by design: two bookings for the same car must serialize somewhere, and this system does it on a per-car advisory lock inside Postgres. No human fleet has a car that 1,200 people try to book per second.
+**One contended car serializes at ~1,100 bookings/s.** That is the per-car ceiling by design: two bookings for the same car must serialize somewhere, and this system does it on a per-car advisory lock inside Postgres. No human fleet has a car that a thousand people try to book per second.
 
-**Search cost is density, not fleet size.** Availability tracks how many cars sit inside the radius, roughly 100 candidates per search at 1k cars and ~109,000 at 10M (a 2km radius over 8,600 cars/km², about 25x Manhattan's taxi density). Same fleet with a 500m radius is 10x faster. The levers, in the order a real product would pull them: shrink the radius as density grows (users in dense cities do not need a 2km circle), cache search results for a few seconds (bookings shift availability slowly at any given minute), and shard by city when a single metro genuinely holds millions of cars. Two stronger levers have been pulled since these numbers were taken, see "The search war story" below: these rows price the rank-everything cheapest sort, and the closest-first default plus the 30-second cache changes the story entirely.
+**Distance search is nearly flat across fleet size, price search is not.** Closest-first streams from the location index and stops when the page fills, so 1k to 1M cars only moves it from 27k to 6.3k qps. Cheapest-first must rank candidates by price before it knows which to check, and no index serves that order, so its cost tracks how many cars sit in the circle: 560 qps at 1M. That asymmetry is why closest is the product default and cheapest ranks a bounded candidate pool (see `availabilityByPriceCandidateSQL`).
 
 ## How big is a real city, anyway
 
-For calibration against the real world: New York, the densest for-hire market on earth, runs 13,587 yellow medallions plus roughly 130,000 total TLC-licensed vehicles. Turo's entire fleet across every market it operates in was about 340,000 active vehicles at the end of 2024. So a mega-successful car-share's largest single city is realistically 50,000 to 150,000 cars, with "half of every registered car in NYC" (~1M) as the absurd theoretical ceiling. Read the table with that in mind: the 100k row, 2,600 searches/s at p50 11ms with no cache, *is* the mega-success case on one Postgres. The 10M row is a stress test roughly 100x past anything that exists.
+For calibration against the real world: New York, the densest for-hire market on earth, runs 13,587 yellow medallions plus roughly 130,000 total TLC-licensed vehicles. Turo's entire fleet across every market it operates in was about 340,000 active vehicles at the end of 2024. So a mega-successful car-share's largest single city is realistically 50,000 to 150,000 cars, with "half of every registered car in NYC" (~1M) as the absurd theoretical ceiling. Read the table with that in mind: the 100k row, 8,400 searches/s at p50 3.4ms with no cache, *is* the mega-success case on one Postgres. And the cache sits in front of all of it.
 
 ## The contention war story
 
@@ -58,23 +60,16 @@ Two changes in [internal/store/store.go](internal/store/store.go) fixed it, and 
 1. `pg_advisory_xact_lock(hash(car_id))` as the first statement of the booking transaction. Writers on the same car queue in order instead of dogpiling the constraint, writers on different cars never meet, and the deadlock cycle becomes impossible.
 2. An indexed `EXISTS` precheck inside the transaction that answers doomed attempts in microseconds instead of letting them attempt the insert.
 
-Result: 4 qps with errors became ~1,200 qps with zero errors. The exclusion constraint stays the only correctness authority, anything racing past the precheck still dies there.
+Result: 4 qps with errors became ~1,100 qps with zero errors. The exclusion constraint stays the only correctness authority, anything racing past the precheck still dies there.
 
 ## The search war story
 
-The table above prices every search the way the cheapest-first sort must: rank every car in the circle, then take a page. Cheapest is the one ordering the location index cannot stream, so its cost grows with density. Sorting by distance lets Postgres walk the index nearest-first and stop the moment the page is full. Filling a page of 100 free cars usually means touching a few hundred rows, whether the circle holds a thousand cars or twenty-six thousand.
+Search originally ranked every car in the circle to serve any page, because the default sort was cheapest-first and price order is the one thing the location index cannot stream. In the dense-NYC scenario that meant 462ms per search and 52/s at saturation. Letting the sort be closest-first turned the same query into an index walk that stops when the page fills: 8.7ms, and the store now sustains thousands of searches/s at any density. Cheapest survives as an option that ranks a bounded candidate pool instead of the whole circle, trading occasional short pages for never scanning 26k rows.
 
-Measured with the store's real SQL on a 400k-car fleet, 26,000 cars inside a 10km circle around Manhattan, 30% of them booked over the search window, 24 concurrent clients on a 24-core box:
+Getting the planner to pick the streaming plan took one non-obvious move, documented on the SQL in [internal/store/store.go](internal/store/store.go): the exact-meter radius trim must stay out of the KNN subquery. As an opaque expression it gets a fixed selectivity guess, the row estimate falls below the LIMIT, and the planner trades the ordered index scan for scan-everything-and-sort, 264ms instead of 8. The trim lives in the outer query, where it cannot influence the inner plan and can only shave a page's tail.
 
-| sort | p50 latency | searches/s |
-|---|---|---|
-| cheapest first (rank everything) | 462ms | 52 |
-| closest first (stream from the index) | 8.7ms | 2,760 |
+The same trap bit a second time. The "how many cars matched" count originally reused the KNN ordering so count and pagination would agree exactly, its LIMIT sat far above the circle's row estimate, and the planner sorted the whole circle: 270ms per count, and since a count runs on every cold cell, the cache-miss path collapsed to 65 searches/s. The count now runs unordered, any plan can stop at its cap, and the miss path came back to ~380-570/s. The lesson generalizes: near a LIMIT, every new query needs checking against which side of the planner's row estimate it lands on.
 
-Same table, same indexes, same filters. The product decision that unlocks it: closest is now the default sort, and cheapest stays one tap away.
+On top of the queries sits a 30-second cache ([internal/httpapi/searchcache.go](internal/httpapi/searchcache.go)). Searches snap to a ~550m cell, a 15-minute-aligned window, and a 500m range step, so nearby searchers share one database query, with single-flight fills so a stampede on a cold cell runs it once. Every response then re-measures distances and re-prices the trip from the exact request, so the snapping never shows. Database load stops scaling with user traffic and is bounded by distinct busy cells per 30 seconds. The trade: a car booked seconds ago can linger in search for up to 30 seconds. Ordering it returns the same JUST TAKEN conflict the two-tab race demonstrates, and the exclusion constraint stays the only truth.
 
-Getting the planner to pick the streaming plan took one non-obvious move, documented on the SQL in [internal/store/store.go](internal/store/store.go). The exact-meter radius trim must stay out of the KNN subquery. As an opaque expression it gets a fixed selectivity guess, the row estimate falls below the LIMIT, and the planner trades the ordered index scan for scan-everything-and-sort, 264ms instead of 8. The trim lives in the outer query, where it cannot influence the inner plan and can only shave a page's tail.
-
-On top of the query sits a 30-second cache ([internal/httpapi/searchcache.go](internal/httpapi/searchcache.go)). Searches snap to a ~550m cell, a 15-minute-aligned window, and a 500m range step, so nearby searchers share one database query, with single-flight fills so a stampede on a cold cell runs it once. Every response then re-measures distances and re-prices the trip from the exact request, so the snapping never shows. The effect on capacity: database load stops scaling with user traffic and is bounded by distinct busy cells per 30 seconds. The trade: a car booked seconds ago can linger in search for up to 30 seconds. Ordering it returns the same JUST TAKEN conflict the two-tab race demonstrates, and the exclusion constraint stays the only truth.
-
-Serialization was the last bill. Once the cache absorbs the database work, half the remaining CPU was encoding/json formatting search pages, much of it printing 17-digit floats nobody reads. Search rows now carry only what search shows (dropping owner_id, which a public endpoint had no business sharing), coordinates round to 6 decimals (~11cm) and distance to whole meters. Pages shrank from 25.7KB to 16KB and one pod serves 44,000 cached searches/s end to end, measured with wrk against the real binary.
+Serialization was the last bill. Once the cache absorbs the database work, half the remaining CPU was encoding/json formatting search pages, much of it printing 17-digit floats nobody reads. Search rows now carry only what search shows (dropping owner_id, which a public endpoint had no business sharing), coordinates round to 6 decimals (~11cm) and distance to whole meters. Pages shrank from 25.7KB to 16KB and one pod serves ~45,000 cached searches/s end to end.
