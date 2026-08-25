@@ -1,0 +1,8 @@
+Generated with gpt-image-2, 1024x688, quality medium, ~$0.03 per image.
+Template: "professional car marketplace listing photograph of a <color> <year>
+<model>, three-quarter front view from the left side, parked at the curb of a
+quiet residential street, soft overcast daylight, realistic photography, sharp
+focus on the whole car fully in frame with margin, softly blurred muted
+background, neutral white balance, no people, no text, no watermark, no
+license plate text". One image per model in cmd/seed's fleet, slug = kebab
+model name. Downscaled to 640w webp q82.

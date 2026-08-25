@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ApiError, api, signIn, type AvailableCar, type Me, type Reservation } from './api';
+import { CarPhoto } from './CarArt';
 import { countdown, money, window as formatWindow } from './format';
 import { Button, Plate, Stamp } from './ui';
 
@@ -73,9 +74,7 @@ export function BookingSheet({ car, from, durationMinutes, me, onClose, onBooked
     <div className="fixed inset-x-0 bottom-0 z-1000 flex justify-center px-4 pb-4">
       <div className="animate-rise w-full max-w-xl rounded-2xl border border-paper-300 bg-paper-50 p-5 shadow-sheet motion-reduce:animate-none">
         <div className="flex items-start gap-4">
-          <Plate tone="ink" className="text-2xl">
-            {money(car.trip_price)}
-          </Plate>
+          <CarPhoto model={car.model} carId={car.id} className="h-16 w-24 shrink-0 rounded-lg" />
           <div className="min-w-0">
             <p className="truncate text-sm font-extrabold">
               {car.model || 'Car'}
@@ -86,7 +85,10 @@ export function BookingSheet({ car, from, durationMinutes, me, onClose, onBooked
               {money(car.price_per_hour)} per hour · price locked when you book
             </p>
           </div>
-          <button type="button" onClick={onClose} aria-label="Close" className="ml-auto -mr-1 -mt-1 rounded-md px-2 py-1 text-paper-500 hover:bg-paper-200">
+          <Plate tone="ink" className="ml-auto text-xl">
+            {money(car.trip_price)}
+          </Plate>
+          <button type="button" onClick={onClose} aria-label="Close" className="-mr-1 -mt-1 rounded-md px-2 py-1 text-paper-500 hover:bg-paper-200">
             ✕
           </button>
         </div>

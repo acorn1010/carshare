@@ -1,19 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, type AvailableCar, type Me } from './api';
-import { CarArt } from './CarArt';
-import { DatePicker } from './DatePicker';
+import { CarPhoto } from './CarArt';
+import { RangePicker } from './RangePicker';
 import { distance, money } from './format';
 import { MapView } from './MapView';
 import { Plate, useToast } from './ui';
 import { BookingSheet } from './BookingSheet';
 
-/** Demo fleet locations around San Francisco, standing in for a geocoder. */
+/** The fleet spans the US, Japan, and Europe. These presets stand in for a
+ * geocoder, and Current location works anywhere seeded. */
 const PLACES = [
-  { name: 'Downtown SF', lat: 37.788, lng: -122.407 },
-  { name: 'Mission', lat: 37.76, lng: -122.419 },
-  { name: 'Marina', lat: 37.8, lng: -122.436 },
-  { name: 'Sunset', lat: 37.753, lng: -122.494 },
-  { name: 'Anywhere in SF', lat: 37.77, lng: -122.4 },
+  { name: 'San Francisco', lat: 37.77, lng: -122.42 },
+  { name: 'New York', lat: 40.73, lng: -73.99 },
+  { name: 'London', lat: 51.51, lng: -0.12 },
+  { name: 'Paris', lat: 48.86, lng: 2.35 },
+  { name: 'Berlin', lat: 52.52, lng: 13.4 },
+  { name: 'Tokyo', lat: 35.68, lng: 139.75 },
 ] as const;
 
 const SEARCH_RANGE_METERS = 14_000;
@@ -27,37 +29,35 @@ function defaultStart(): Date {
 /** Search screen, marketplace style: a hero band with the Where / From /
  * Until box up top, plate-marked map and result list below. */
 export function SearchPage({ me }: { readonly me: Me | null | 'loading' }) {
-  const [place, setPlace] = useState<{ name: string; lat: number; lng: number }>(PLACES[4]);
+  const [place, setPlace] = useState<{ name: string; lat: number; lng: number }>(PLACES[0]);
   const [from, setFrom] = useState<Date>(defaultStart);
   const [until, setUntil] = useState<Date>(() => new Date(defaultStart().getTime() + 2 * 3600 * 1000));
+  const [sort, setSort] = useState<'price' | 'distance'>('price');
+  const [movedCenter, setMovedCenter] = useState<{ lat: number; lng: number } | null>(null);
   const [cars, setCars] = useState<readonly AvailableCar[] | 'loading'>('loading');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const { toast, show } = useToast();
-
-  // Keep the window valid: dragging the start past the end pushes the end.
-  const pickFrom = (next: Date) => {
-    setFrom(next);
-    if (until.getTime() <= next.getTime()) {
-      setUntil(new Date(next.getTime() + 2 * 3600 * 1000));
-    }
-  };
 
   const durationMinutes = Math.max(15, Math.round((until.getTime() - from.getTime()) / 60_000));
 
   const search = useCallback(() => {
     setCars('loading');
     api
-      .availability({ lat: place.lat, lng: place.lng, from, durationMinutes, rangeMeters: SEARCH_RANGE_METERS })
+      .availability({ lat: place.lat, lng: place.lng, from, durationMinutes, rangeMeters: SEARCH_RANGE_METERS, sort })
       .then((result) => setCars(result.cars))
       .catch((error: Error) => {
         setCars([]);
         show(error.message);
       });
-  }, [place, from, durationMinutes, show]);
+  }, [place, from, durationMinutes, sort, show]);
 
   useEffect(search, [search]);
 
   const selected = cars !== 'loading' ? cars.find((car) => car.id === selectedId) ?? null : null;
+
+  const onChangePlaceFromMap = (at: { lat: number; lng: number }) => {
+    setPlace({ name: 'This area', lat: at.lat, lng: at.lng });
+  };
 
   return (
     <div>
@@ -70,13 +70,19 @@ export function SearchPage({ me }: { readonly me: Me | null | 'loading' }) {
         </p>
         <div className="mt-6 flex flex-wrap items-end gap-x-5 gap-y-4 rounded-2xl bg-paper-50 p-4 shadow-sheet">
           <WherePicker place={place} onChange={setPlace} />
-          <DatePicker label="From" value={from} onChange={pickFrom} />
-          <DatePicker label="Until" value={until} onChange={setUntil} />
+          <RangePicker
+            from={from}
+            until={until}
+            onChange={(nextFrom, nextUntil) => {
+              setFrom(nextFrom);
+              setUntil(nextUntil);
+            }}
+          />
           <button
             type="button"
             onClick={search}
             aria-label="Search"
-            className="ml-auto rounded-xl bg-pine-600 px-5 py-2.5 text-base font-extrabold text-paper-50 transition-colors duration-75 hover:bg-pine-700"
+            className="ml-auto rounded-xl bg-pine-600 px-5 py-2.5 text-base font-extrabold text-paper-50 transition-colors duration-75 hover:bg-pine-700 active:bg-pine-800"
           >
             Find cars
           </button>
@@ -85,6 +91,21 @@ export function SearchPage({ me }: { readonly me: Me | null | 'loading' }) {
 
       <div className="grid gap-4 pt-6 lg:grid-cols-5">
         <div className="order-2 lg:order-1 lg:col-span-2">
+          <div className="flex items-center gap-1 pb-3">
+            <span className="pr-2 text-xs font-semibold uppercase tracking-wide text-paper-600">Sort</span>
+            {(['price', 'distance'] as const).map((option) => (
+              <button
+                key={option}
+                type="button"
+                onClick={() => setSort(option)}
+                className={`rounded-full px-3 py-1 text-xs font-bold transition-colors duration-75 ${
+                  sort === option ? 'bg-paper-900 text-paper-50' : 'bg-paper-200 text-paper-700 hover:bg-paper-300 active:bg-paper-400'
+                }`}
+              >
+                {option === 'price' ? 'Cheapest' : 'Closest'}
+              </button>
+            ))}
+          </div>
           {cars === 'loading' ? (
             <p className="py-8 text-sm text-paper-600">Looking for free cars…</p>
           ) : cars.length === 0 ? (
@@ -97,11 +118,11 @@ export function SearchPage({ me }: { readonly me: Me | null | 'loading' }) {
                     type="button"
                     onClick={() => setSelectedId(car.id)}
                     className={`animate-rise flex w-full items-center gap-4 rounded-xl border bg-paper-50 px-4 py-3 text-left shadow-card transition-colors duration-75 motion-reduce:animate-none ${
-                      selectedId === car.id ? 'border-pine-600' : 'border-transparent hover:border-paper-400'
+                      selectedId === car.id ? 'border-pine-600 active:bg-paper-100' : 'border-transparent hover:border-paper-400 active:bg-paper-100'
                     }`}
                     style={{ animationDelay: `${Math.min(index, 12) * 25}ms` }}
                   >
-                    <CarArt carId={car.id} className="w-16 shrink-0" />
+                    <CarPhoto model={car.model} carId={car.id} className="h-14 w-20 shrink-0 rounded-lg" />
                     <span className="flex min-w-0 flex-col">
                       <span className="truncate text-sm font-bold">
                         {car.model || 'Car'}
@@ -120,19 +141,35 @@ export function SearchPage({ me }: { readonly me: Me | null | 'loading' }) {
             </ul>
           )}
         </div>
-        <MapView
-          key={place.name}
-          className="order-1 h-72 rounded-2xl shadow-card lg:order-2 lg:col-span-3 lg:h-[34rem]"
-          center={[place.lat, place.lng]}
-          cars={cars === 'loading' ? [] : cars.map((car) => ({
-            id: car.id,
-            lat: car.lat,
-            lng: car.lng,
-            priceCents: car.trip_price,
-            selected: car.id === selectedId,
-          }))}
-          onSelect={setSelectedId}
-        />
+        <div className="relative order-1 lg:order-2 lg:col-span-3">
+          <MapView
+            className="h-72 w-full rounded-2xl shadow-card lg:h-[34rem]"
+            center={[place.lat, place.lng]}
+            cars={cars === 'loading' ? [] : cars.map((car) => ({
+              id: car.id,
+              lat: car.lat,
+              lng: car.lng,
+              priceCents: car.trip_price,
+              selected: car.id === selectedId,
+            }))}
+            onSelect={setSelectedId}
+            onMoved={(lat, lng) => setMovedCenter({ lat, lng })}
+          />
+          {movedCenter ? (
+            <div className="pointer-events-none absolute inset-x-0 top-3 z-500 flex justify-center">
+              <button
+                type="button"
+                onClick={() => {
+                  onChangePlaceFromMap(movedCenter);
+                  setMovedCenter(null);
+                }}
+                className="animate-rise pointer-events-auto rounded-full bg-paper-900 px-4 py-2 text-sm font-bold text-paper-50 shadow-sheet transition-colors duration-75 hover:bg-paper-800 active:bg-paper-700 motion-reduce:animate-none"
+              >
+                ↻ Search this area
+              </button>
+            </div>
+          ) : null}
+        </div>
       </div>
 
       {selected ? (
@@ -180,7 +217,7 @@ function WherePicker({ place, onChange }: {
   const useMyLocation = () => {
     navigator.geolocation.getCurrentPosition(
       (position) => onChange({ name: 'Near me', lat: position.coords.latitude, lng: position.coords.longitude }),
-      () => onChange(PLACES[4]),
+      () => onChange(PLACES[0]),
     );
     setOpen(false);
   };
@@ -199,7 +236,7 @@ function WherePicker({ place, onChange }: {
       {open ? (
         <ul className="animate-rise absolute z-1050 mt-2 w-48 overflow-hidden rounded-xl border border-paper-300 bg-paper-50 shadow-sheet motion-reduce:animate-none">
           <li>
-            <button type="button" onClick={useMyLocation} className="w-full px-3 py-2 text-left text-sm font-semibold hover:bg-paper-200">
+            <button type="button" onClick={useMyLocation} className="w-full px-3 py-2 text-left text-sm font-semibold hover:bg-paper-200 active:bg-paper-300">
               ⌖ Current location
             </button>
           </li>
@@ -211,7 +248,7 @@ function WherePicker({ place, onChange }: {
                   onChange(option);
                   setOpen(false);
                 }}
-                className={`w-full px-3 py-2 text-left text-sm font-semibold hover:bg-paper-200 ${
+                className={`w-full px-3 py-2 text-left text-sm font-semibold hover:bg-paper-200 active:bg-paper-300 ${
                   option.name === place.name ? 'text-pine-700' : ''
                 }`}
               >

@@ -13,12 +13,14 @@ export type MapCar = {
 
 /** Leaflet map with license-plate price markers. Also doubles as a location
  * picker for hosts when onPick is set. */
-export function MapView({ cars, center, zoom = 13, onSelect, onPick, pin, className = '' }: {
+export function MapView({ cars, center, zoom = 13, onSelect, onPick, onMoved, pin, className = '' }: {
   readonly cars: readonly MapCar[];
   readonly center: readonly [number, number];
   readonly zoom?: number;
   readonly onSelect?: (id: string) => void;
   readonly onPick?: (lat: number, lng: number) => void;
+  /** Fires with the new center after the user drags or zooms the map. */
+  readonly onMoved?: (lat: number, lng: number) => void;
   /** Host-mode dropped pin. */
   readonly pin?: readonly [number, number] | null;
   readonly className?: string;
@@ -26,10 +28,13 @@ export function MapView({ cars, center, zoom = 13, onSelect, onPick, pin, classN
   const container = useRef<HTMLDivElement>(null);
   const map = useRef<L.Map>(null);
   const layer = useRef<L.LayerGroup>(null);
+  const programmaticMove = useRef(false);
   const pickHandler = useRef(onPick);
   const selectHandler = useRef(onSelect);
+  const movedHandler = useRef(onMoved);
   pickHandler.current = onPick;
   selectHandler.current = onSelect;
+  movedHandler.current = onMoved;
 
   useEffect(() => {
     if (!container.current || map.current) {
@@ -44,6 +49,14 @@ export function MapView({ cars, center, zoom = 13, onSelect, onPick, pin, classN
     created.on('click', (event: L.LeafletMouseEvent) => {
       pickHandler.current?.(event.latlng.lat, event.latlng.lng);
     });
+    created.on('moveend', () => {
+      if (programmaticMove.current) {
+        programmaticMove.current = false;
+        return;
+      }
+      const at = created.getCenter();
+      movedHandler.current?.(at.lat, at.lng);
+    });
     map.current = created;
     layer.current = L.layerGroup().addTo(created);
     return () => {
@@ -55,6 +68,15 @@ export function MapView({ cars, center, zoom = 13, onSelect, onPick, pin, classN
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Follow the center prop without tearing the map down, and without the
+  // programmatic jump counting as a user move.
+  useEffect(() => {
+    if (map.current) {
+      programmaticMove.current = true;
+      map.current.setView([center[0], center[1]], map.current.getZoom());
+    }
+  }, [center]);
+
   useEffect(() => {
     const group = layer.current;
     if (!group) {
@@ -65,7 +87,7 @@ export function MapView({ cars, center, zoom = 13, onSelect, onPick, pin, classN
       const marker = L.marker([car.lat, car.lng], {
         icon: L.divIcon({
           className: '',
-          html: `<div class="plate ${car.selected ? 'bg-pine-600 text-paper-50' : 'bg-paper-50 text-paper-900'} cursor-pointer text-sm shadow-card">${money(car.priceCents)}</div>`,
+          html: `<div class="plate ${car.selected ? 'bg-pine-600 text-paper-50 hover:bg-pine-700 active:bg-pine-800' : 'bg-paper-50 text-paper-900 hover:bg-paper-200 active:bg-paper-300'} cursor-pointer text-sm shadow-card transition-colors duration-75">${money(car.priceCents)}</div>`,
           iconSize: undefined,
           iconAnchor: [24, 14],
         }),

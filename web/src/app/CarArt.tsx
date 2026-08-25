@@ -1,5 +1,34 @@
-/** Flat car silhouette, tinted deterministically per car so the list reads as
- * a fleet of different cars without shipping photos. */
+import { useState } from 'react';
+
+/** Listing photo for a model, shipped with the site for the known demo fleet.
+ * A host-written model we have no photo for falls back to the silhouette. */
+export function CarPhoto({ model, carId, className = '' }: {
+  readonly model: string;
+  readonly carId: string;
+  readonly className?: string;
+}) {
+  const [missing, setMissing] = useState(false);
+  const slug = model.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  if (missing || slug === '') {
+    return (
+      <span className={`flex items-center justify-center bg-paper-200 ${className}`}>
+        <CarArt carId={carId} className="w-4/5" />
+      </span>
+    );
+  }
+  return (
+    <img
+      src={`/cars/${slug}.webp`}
+      alt={model}
+      loading="lazy"
+      onError={() => setMissing(true)}
+      className={`object-cover ${className}`}
+    />
+  );
+}
+
+/** Flat car silhouette, tinted deterministically per car, the fallback when a
+ * listing has no photo. */
 
 const TINTS = ['#16714a', '#c98317', '#c94e32', '#2f2b22', '#47ab7c', '#6b6350'] as const;
 

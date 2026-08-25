@@ -1,20 +1,20 @@
 @import "tailwindcss";
 
-/* Carshare design tokens. Transit-editorial: warm paper ground, deep pine
+/* Carshare design tokens. Transit-editorial on a pure white ground: deep pine
    primary, marigold for holds, clay for conflicts. Prices and times always
    render in tabular numerals, and the price chip is drawn like a license
    plate, which is the one detail the whole interface hangs on. */
 @theme {
-  --color-paper-50: #fbf9f4;
-  --color-paper-100: #f5f1e8;
-  --color-paper-200: #ebe5d6;
-  --color-paper-300: #d9d0ba;
-  --color-paper-400: #b6ac93;
-  --color-paper-500: #8e8570;
-  --color-paper-600: #6b6350;
-  --color-paper-700: #4a4436;
-  --color-paper-800: #2f2b22;
-  --color-paper-900: #201d17;
+  --color-paper-50: #ffffff;
+  --color-paper-100: #f7f7f6;
+  --color-paper-200: #ededeb;
+  --color-paper-300: #d8d8d4;
+  --color-paper-400: #b2b0aa;
+  --color-paper-500: #8b8983;
+  --color-paper-600: #63615c;
+  --color-paper-700: #4a4945;
+  --color-paper-800: #2e2d2b;
+  --color-paper-900: #1d1d1b;
 
   --color-pine-50: #eef7f2;
   --color-pine-100: #d8eee2;
@@ -86,7 +86,7 @@
 }
 
 html {
-  background-color: var(--color-paper-100);
+  background-color: #ffffff;
   color: var(--color-paper-900);
   font-family: var(--font-sans);
 }

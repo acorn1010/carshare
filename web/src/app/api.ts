@@ -80,10 +80,17 @@ export const api = {
   me: () => request<Me>('/v1/me'),
   logout: () => request<void>('/v1/auth/logout', { method: 'POST' }),
 
-  availability: (params: { lat: number; lng: number; from: Date; durationMinutes: number; rangeMeters: number }) =>
+  availability: (params: {
+    lat: number;
+    lng: number;
+    from: Date;
+    durationMinutes: number;
+    rangeMeters: number;
+    sort: 'price' | 'distance';
+  }) =>
     request<{ cars: AvailableCar[] }>(
       `/v1/availability?lat=${params.lat}&lng=${params.lng}&from=${encodeURIComponent(params.from.toISOString())}` +
-        `&duration_minutes=${params.durationMinutes}&range_meters=${params.rangeMeters}`,
+        `&duration_minutes=${params.durationMinutes}&range_meters=${params.rangeMeters}&sort=${params.sort}`,
     ),
 
   order: (body: {

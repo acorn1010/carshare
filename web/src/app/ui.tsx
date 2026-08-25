@@ -24,8 +24,8 @@ export function Button({ children, onClick, tone = 'pine', disabled, className =
 }) {
   const tones = {
     pine: 'bg-pine-600 text-paper-50 hover:bg-pine-700 active:bg-pine-800',
-    ghost: 'bg-transparent text-paper-800 border border-paper-300 hover:border-paper-500 hover:bg-paper-50',
-    clay: 'bg-transparent text-clay-600 border border-clay-500/40 hover:bg-clay-100',
+    ghost: 'bg-transparent text-paper-800 border border-paper-300 hover:border-paper-500 hover:bg-paper-100 active:bg-paper-200',
+    clay: 'bg-transparent text-clay-600 border border-clay-500/40 hover:bg-clay-100 active:bg-clay-100 active:border-clay-600',
   } as const;
   return (
     <button

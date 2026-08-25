@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ApiError, api, signIn, type Calendar, type Car, type Me } from './api';
-import { CarArt } from './CarArt';
+import { CarPhoto } from './CarArt';
 import { DatePicker } from './DatePicker';
 import { money, window as formatWindow } from './format';
 import { MapView } from './MapView';
@@ -150,7 +150,7 @@ function CarCard({ car, onChange, onFail, onDone }: {
   return (
     <section className="rounded-2xl border border-paper-200 bg-paper-50 p-4 shadow-card">
       <div className="flex flex-wrap items-center gap-3">
-        <CarArt carId={car.id} className="w-14 shrink-0" />
+        <CarPhoto model={car.model} carId={car.id} className="h-12 w-18 shrink-0 rounded-lg" />
         <span className="flex flex-col">
           <span className="text-sm font-bold">
             {car.model || 'Car'}

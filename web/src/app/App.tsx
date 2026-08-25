@@ -49,7 +49,7 @@ function Header({ page, me }: { readonly page: Page; readonly me: Me | null | 'l
             key={tab.key}
             href={tab.href}
             className={`rounded-lg px-3 py-1.5 text-sm font-semibold transition-colors duration-75 ${
-              page === tab.key ? 'bg-paper-900 text-paper-50' : 'text-paper-700 hover:bg-paper-200'
+              page === tab.key ? 'bg-paper-900 text-paper-50' : 'text-paper-700 hover:bg-paper-200 active:bg-paper-300'
             }`}
           >
             {tab.label}
