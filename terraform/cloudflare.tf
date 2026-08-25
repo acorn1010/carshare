@@ -10,6 +10,25 @@ resource "cloudflare_record" "api" {
   proxied = true
 }
 
+# The API's own hostname when a frontend worker owns the main domain.
+resource "cloudflare_record" "api_origin" {
+  count   = local.api_domain == var.domain ? 0 : 1
+  zone_id = var.cloudflare_zone_id
+  name    = local.api_domain
+  type    = "CNAME"
+  content = var.ingress_target
+  proxied = true
+}
+
+# Routes every request for the main domain to the frontend worker, which
+# serves the site and proxies /v1 back to the API hostname above.
+resource "cloudflare_worker_route" "site" {
+  count       = var.worker_script == "" ? 0 : 1
+  zone_id     = var.cloudflare_zone_id
+  pattern     = "${var.domain}/*"
+  script_name = var.worker_script
+}
+
 resource "cloudflare_healthcheck" "api" {
   count   = var.enable_healthcheck ? 1 : 0
   zone_id = var.cloudflare_zone_id

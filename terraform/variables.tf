@@ -13,9 +13,21 @@ variable "cloudflare_zone_id" {
 }
 
 variable "domain" {
-  description = "Public hostname the API serves."
+  description = "Public hostname users visit. With a frontend worker, this is where the worker serves the site and proxies /v1 to the API."
   type        = string
   default     = "cars.foony.com"
+}
+
+variable "api_domain" {
+  description = "Hostname the cluster ingress serves the API on. Empty means the API serves directly on domain, with no frontend worker."
+  type        = string
+  default     = ""
+}
+
+variable "worker_script" {
+  description = "Cloudflare Worker script name to route domain/* to (deployed separately with wrangler). Empty skips the route."
+  type        = string
+  default     = ""
 }
 
 variable "ingress_target" {

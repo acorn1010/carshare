@@ -1,6 +1,8 @@
 # Carshare
 
-A car-sharing reservation backend. Owners list their cars, renters find and book them by the hour. Think Airbnb for cars, scoped to one city, built to handle 100k to 1M cars on boring, provable technology: Go, Postgres, and one exclusion constraint that makes double-booking impossible.
+A car-sharing marketplace. Owners list their cars, renters find and book them by the hour. Think Airbnb for cars, scoped to one city, built to handle 100k to 1M cars on boring, provable technology: Go, Postgres, and one exclusion constraint that makes double-booking impossible.
+
+**Live demo: [cars.foony.com](https://cars.foony.com)** — open it in two tabs and race for the same car. One tab books, the other gets JUST TAKEN, and that is the whole design in one interaction. The exhibit is the reservation engine underneath; the site is its shop window.
 
 - **API**: Go stdlib HTTP, Google OAuth sign-in, JSON everywhere
 - **Storage**: a single Postgres with the entire booking-correctness story in the schema
@@ -21,12 +23,16 @@ Sign-in needs Google OAuth credentials (`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRE
 ## Architecture
 
 ```
-browser ── Cloudflare (TLS, proxy, health check)
-              │
-        Traefik ingress ── carshare pods (2..10, HPA)
-                                │
-                           Postgres ──nightly──▶ R2 (pg_dump)
+browser ── Cloudflare ── Worker at cars.foony.com (serves the site, proxies /v1)
+                             │
+                     cars-api.foony.com
+                             │
+                Traefik ingress ── carshare pods (2..10, HPA)
+                                        │
+                                   Postgres ──nightly──▶ R2 (pg_dump)
 ```
+
+The frontend ([web/](web/)) is Astro + React + Tailwind on a Cloudflare Worker. The Worker serves static assets from the edge and passes `/v1/*` through to the API, so the browser sees a single origin: the session cookie stays first-party and no CORS exists anywhere. Frontend deploys are a `wrangler deploy`, fully decoupled from backend rolls.
 
 The API pods are stateless. All booking correctness lives in Postgres, so pods never coordinate with each other and you can add, kill, or roll them freely. At city scale (1M cars, tens of millions of reservations a year) one well-kept Postgres is nowhere near its limits.
 

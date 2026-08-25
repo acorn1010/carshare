@@ -4,6 +4,7 @@
 # database_url to a managed Postgres instead and none of this exists.
 
 locals {
+  api_domain         = var.api_domain == "" ? var.domain : var.api_domain
   use_local_postgres = var.database_url == ""
   effective_database_url = local.use_local_postgres ? (
     "postgresql://postgres:${var.postgres_password}@carshare-postgres:5432/carshare?sslmode=disable"

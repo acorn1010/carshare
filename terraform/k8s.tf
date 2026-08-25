@@ -137,11 +137,11 @@ resource "kubernetes_ingress_v1" "carshare" {
   spec {
     ingress_class_name = "traefik"
     tls {
-      hosts       = [var.domain]
-      secret_name = "${var.domain}-tls"
+      hosts       = [local.api_domain]
+      secret_name = "${local.api_domain}-tls"
     }
     rule {
-      host = var.domain
+      host = local.api_domain
       http {
         path {
           path      = "/"
