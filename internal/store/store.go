@@ -542,17 +542,14 @@ const availabilityByDistanceSQL = `
 		ORDER BY distance_meters, trip_price, id
 		LIMIT $8 OFFSET $9`
 
-// availabilityCountSQL counts matches without ordering them, stopping at the
-// caller's cap. It reuses the distance variant's degree-ordered index scan and
-// its 2x over-fetch, so the count sees the same candidate pool the deepest
-// reachable page does and the two always agree. Counting the price variant the
-// same way is not just allowed but cheaper than paging it: with no ORDER BY,
-// Postgres stops at the cap instead of ranking the whole circle.
+// availabilityCountSQL counts matches with no ORDER BY, so any plan can stop
+// at the cap. Ordering the pool to match pagination exactly re-runs the
+// planner trap documented on availabilityByDistanceSQL and costs 9x. The
+// trade: near the padded circle's east-west edge the count can include a car
+// the degree-ordered pages cannot reach.
 const availabilityCountSQL = `
 		SELECT count(*) FROM (
 		  SELECT 1 FROM (` + availabilityFilterSQL + `
-		    ORDER BY c.location <-> point($1, $2)
-		    LIMIT 2 * $8::int
 		  ) sub
 		  WHERE distance_meters <= $4
 		  LIMIT $8::int
