@@ -117,12 +117,12 @@ export function SearchPage({ me }: { readonly me: Me | null | 'loading' }) {
                   <button
                     type="button"
                     onClick={() => setSelectedId(car.id)}
-                    className={`animate-rise flex w-full items-center gap-4 rounded-xl border bg-paper-50 px-4 py-3 text-left shadow-card transition-colors duration-75 motion-reduce:animate-none ${
+                    className={`animate-rise flex w-full items-center gap-4 overflow-hidden rounded-xl border bg-paper-50 pr-4 text-left shadow-card transition-colors duration-75 motion-reduce:animate-none ${
                       selectedId === car.id ? 'border-pine-600 active:bg-paper-100' : 'border-transparent hover:border-paper-400 active:bg-paper-100'
                     }`}
                     style={{ animationDelay: `${Math.min(index, 12) * 25}ms` }}
                   >
-                    <CarPhoto model={car.model} carId={car.id} className="h-14 w-20 shrink-0 rounded-lg" />
+                    <CarPhoto model={car.model} carId={car.id} className="h-20 w-28 shrink-0 self-stretch" />
                     <span className="flex min-w-0 flex-col">
                       <span className="truncate text-sm font-bold">
                         {car.model || 'Car'}
