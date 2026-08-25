@@ -6,6 +6,13 @@ resource "kubernetes_namespace_v1" "carshare" {
   metadata {
     name = var.namespace
   }
+  # The cluster writes its own bookkeeping annotations onto the namespace
+  # (Rancher's cattle.io status and lifecycle markers). This resource declares
+  # only a name, so without this every plan offers to strip them and the
+  # cluster puts them back, which buries a real diff in expected noise.
+  lifecycle {
+    ignore_changes = [metadata[0].annotations]
+  }
 }
 
 resource "kubernetes_secret_v1" "carshare" {
