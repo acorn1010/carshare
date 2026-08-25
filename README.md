@@ -1,6 +1,6 @@
 # Carshare
 
-A car-sharing marketplace. Owners list their cars, renters find and book them by the hour. Think Airbnb for cars, scoped to one city, built to handle 100k to 1M cars on boring, provable technology: Go, Postgres, and one exclusion constraint that makes double-booking impossible.
+A car-sharing marketplace. Owners list their cars, renters find and book them by the hour. Think Airbnb for cars, running a worldwide fleet (the demo seeds 725k cars across the US, Japan, and Europe, never in water) on boring, provable technology: Go, Postgres, and one exclusion constraint that makes double-booking impossible.
 
 **Live demo: [cars.foony.com](https://cars.foony.com)** — open it in two tabs and race for the same car. One tab books, the other gets JUST TAKEN, and that is the whole design in one interaction. The exhibit is the reservation engine underneath; the site is its shop window.
 
@@ -29,7 +29,7 @@ Sign-in needs Google OAuth credentials (`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRE
 
 The frontend ([web/](web/)) is Astro + React + Tailwind on a Cloudflare Worker. The Worker serves static assets from the edge and passes `/v1/*` through to the API, so the browser sees a single origin: the session cookie stays first-party and no CORS exists anywhere. Frontend deploys are a `wrangler deploy`, fully decoupled from backend rolls.
 
-The API pods are stateless. All booking correctness lives in Postgres, so pods never coordinate with each other and you can add, kill, or roll them freely. At city scale (1M cars, tens of millions of reservations a year) one well-kept Postgres is nowhere near its limits.
+The API pods are stateless. All booking correctness lives in Postgres, so pods never coordinate with each other and you can add, kill, or roll them freely. At realistic scale, a million cars and tens of millions of reservations a year, one well-kept Postgres is nowhere near its limits.
 
 Search pages are cached in each pod for 30 seconds, snapped to a ~550m cell and a 15-minute window so nearby searchers share one database query ([the numbers](BENCHMARKS.md)). The deliberate trade: a car booked seconds ago can stay in search results for up to 30 seconds. Booking it returns the same JUST TAKEN conflict as the two-tab race, so the cache never touches correctness, only freshness.
 
@@ -74,7 +74,7 @@ Two confirmed reservations for the same car can never overlap in time. Not "the 
 
 **`uuid` primary keys, no prefixes.** Postgres's `uuid` type is a fixed 128-bit value, it cannot carry a `car-` prefix. If you want prefixed ids in an API response, prepend them in the app. We keep raw uuids.
 
-**Locations are the built-in `point` type with a GiST index**, not PostGIS. PostGIS is the right answer for real geography, but for "cars in one city sorted by distance" the built-in type already gives an indexed radius filter (`location <@ circle(...)`) and exact-enough distances (longitude scaled by cos(latitude), well under 1% error at city scale). One less extension to operate.
+**Locations are the built-in `point` type with a GiST index**, not PostGIS. PostGIS is the right answer for real geography, but for "cars near a point, closest first" the built-in type already gives an indexed radius filter (`location <@ circle(...)`) and exact-enough distances (longitude scaled by cos(latitude), well under 1% error at search-circle sizes). One less extension to operate.
 
 **Prices are integers, in cents.** The trip price is frozen onto the reservation at booking time, so an owner's later price change never rewrites history.
 
@@ -92,11 +92,11 @@ Every mutation is either one conditional SQL statement or a short transaction en
 
 **Owner schedules vs renter bookings.** The rule: reservations always beat recurrences. A booking checks the recurrences visible at its snapshot. If the owner schedules concurrently, the booking stands and the owner misses that occurrence, which is exactly the product behavior we want, so `scheduleCar` needs no conflict check at all and the race disappears by design.
 
-**Cancellation.** One conditional `UPDATE`: yours, still confirmed, and either a hold, more than 24 hours before start, or within one hour of booking. That matches the marketplace standard (Turo and Getaround both draw the free line at 24 hours and both give a booking-time grace hour). They charge a fee inside 24 hours instead of refusing, Turo about a day's price and Getaround 50%, which is the natural extension here once payments exist. Cancelled rows drop out of the exclusion constraint so the slot frees instantly.
+**Cancellation.** One conditional `UPDATE`: yours, still confirmed, and either a hold, more than 24 hours before start, or within one hour of booking. That matches the marketplace standard (Turo and Getaround both draw the free line at 24 hours with a booking-time grace hour; both charge instead of refusing inside it, the natural extension once payments exist). Cancelled rows drop out of the exclusion constraint so the slot frees instantly.
 
 ## Recurring owner holds
 
-Owners can block their car on a schedule ("every Wednesday 1-3pm") with `weekly`, `monthly`, or `yearly` periods. Recurrences are **evaluated at query time** by one SQL function, `cars.recurrence_overlaps`, never expanded into rows. The function is closed-form: it computes which occurrence lands near the queried window and checks that one and its neighbors, so cost is constant per recurrence no matter how old the schedule is.
+Owners can block their car on a schedule, an evening ("every Wednesday 1-3pm") or a span ("the first weekend of every month"), with `weekly`, `monthly`, or `yearly` periods. Recurrences are **evaluated at query time** by one SQL function, `cars.recurrence_overlaps`, never expanded into rows. The function is closed-form: it computes which occurrence lands near the queried window and checks that one and its neighbors, so cost is constant per recurrence no matter how old the schedule is.
 
 Occurrence times are computed in the schedule's IANA timezone, so a 1pm hold stays at 1pm wall-clock across DST transitions. Month arithmetic clamps like Postgres does: a Jan 31 monthly hold lands on Feb 28. Both behaviors are pinned by tests.
 
@@ -110,7 +110,7 @@ Everything is Prometheus, prefix `carshare_`:
 - `carshare_db_pool_*`: pool saturation before it becomes latency
 - `carshare_search_cache_total{result}`: whether the cache earns its keep, hit rate should climb with traffic
 - `carshare_errors_total{component,kind}`: internal failures, labeled by the broken part
-- `carshare_double_booked_pairs`: **the invariant gauge**. A background loop counts overlapping confirmed pairs among current and future reservations (past rows are immutable history, rescanning them can never change the answer). The constraint alone guarantees correctness, this gauge exists to catch operational accidents the constraint cannot survive, a migration dropping it or a bad restore, and its alert is severity critical with `for: 0m`
+- `carshare_double_booked_pairs`: **the invariant gauge**. A background loop counts overlapping confirmed pairs among current and future reservations. The constraint guarantees correctness; the gauge catches what the constraint cannot survive, a migration dropping it or a bad restore. Its alert is critical with `for: 0m`
 
 Alert rules ship in [terraform/monitoring.tf](terraform/monitoring.tf): down, error rate at two severities, p95 latency, pool saturation, HPA pinned at max, stale backup, and the double-booking invariant. Two cluster-level dependencies to check before trusting any of it: Alertmanager must have real receivers configured (rules that fire into a void are decoration), and the external Cloudflare health check in [terraform/cloudflare.tf](terraform/cloudflare.tf) covers what in-cluster metrics cannot see: DNS, TLS, and the path into the cluster.
 
@@ -164,13 +164,17 @@ Honest answers for the "what if it is 100M cars and 30k qps" question:
 
 ```
 cmd/carshare/          entrypoint: config, pools, two listeners, shutdown
-internal/httpapi/      routes, validation, auth middleware, error mapping
+cmd/bench/             the fleet-size benchmark ladder behind BENCHMARKS.md
+cmd/seed/              the worldwide seeder: cities + a land/water mask
+internal/httpapi/      routes, validation, the search cache, error mapping
 internal/store/        every SQL statement, the DataStore interface
 internal/store/memstore/  in-memory DataStore for handler tests
 internal/auth/         session tokens (hashed at rest) and Google OAuth
 internal/{config,logging,metrics}/  the boring glue
 db/                    schema.sql (declarative, psqldef) + apply script
+web/                   the site: Astro + React on a Cloudflare Worker
 terraform/             Cloudflare + Kubernetes + alerts + backups
+docs/                  the architecture diagram
 scripts/dev_db.sh      local Postgres for development and tests
 ```
 
