@@ -246,6 +246,14 @@ type ScheduleParams struct {
 	Timezone string
 }
 
+// Searcher answers availability queries. The in-memory fleet implements it
+// for production search, Store and memstore implement it through DataStore
+// for the bench and for handler tests.
+type Searcher interface {
+	Availability(ctx context.Context, params AvailabilityParams) ([]AvailableCar, error)
+	AvailabilityCount(ctx context.Context, params AvailabilityCountParams) (int, error)
+}
+
 // DataStore is everything the HTTP layer needs. Store implements it against
 // Postgres, memstore implements it in memory for handler tests.
 type DataStore interface {

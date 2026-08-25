@@ -57,6 +57,26 @@ var (
 		Name: "carshare_search_cache_total",
 		Help: "Availability search cache lookups, labeled by result (hit, miss).",
 	}, []string{"result"})
+
+	// FleetChangesTotal counts fleet_log rows applied to the in-memory fleet.
+	FleetChangesTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "carshare_fleet_changes_total",
+		Help: "Change log rows applied to the in-memory search fleet.",
+	})
+
+	// FleetRebuildsTotal counts snapshot rebuilds after a broken feed. A
+	// climbing rate means the feed keeps failing and freshness is suffering.
+	FleetRebuildsTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "carshare_fleet_rebuilds_total",
+		Help: "Full snapshot rebuilds of the in-memory search fleet.",
+	})
+
+	// FleetCars is how many cars the in-memory fleet holds. Zero while
+	// serving traffic means search is answering from nothing.
+	FleetCars = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "carshare_fleet_cars",
+		Help: "Cars held by the in-memory search fleet.",
+	})
 )
 
 // Handler exposes the default registry for the metrics listener.
