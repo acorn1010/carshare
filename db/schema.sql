@@ -123,6 +123,53 @@ CREATE TABLE "cars"."recurrences" (
 
 CREATE INDEX cars_recurrences_car_index ON cars.recurrences USING btree (car_id) WHERE active;
 
+CREATE TABLE "cars"."fleet_log" (
+    "seq" bigserial NOT NULL,
+    "entry" json NOT NULL,
+    "created_at" timestamp with time zone NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT cars_fleet_log_pkey PRIMARY KEY ("seq")
+);
+
+CREATE OR REPLACE FUNCTION "cars"."log_fleet_change"() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+-- Appends the row change to cars.fleet_log in the same transaction, so the
+-- log is exactly as durable and ordered as the change itself. The entry is
+-- self-contained: readers never join back to the source tables.
+DECLARE
+    target record;
+    entry json;
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        target := OLD;
+    ELSE
+        target := NEW;
+    END IF;
+    CASE TG_TABLE_NAME
+        WHEN 'cars' THEN
+            entry := json_build_object('t', 'car', 'op', TG_OP, 'id', target.id,
+                'model', target.model, 'model_year', target.model_year,
+                'lat', target.location[1], 'lng', target.location[0],
+                'price_per_hour', target.price_per_hour, 'is_listed', target.is_listed);
+        WHEN 'reservations' THEN
+            entry := json_build_object('t', 'reservation', 'op', TG_OP, 'id', target.id,
+                'car_id', target.car_id, 'start', lower(target.during), 'end', upper(target.during),
+                'status', target.status, 'hold_expires_at', target.hold_expires_at);
+        WHEN 'recurrences' THEN
+            entry := json_build_object('t', 'recurrence', 'op', TG_OP, 'id', target.id,
+                'car_id', target.car_id, 'first_start', lower(target.first_occurrence),
+                'first_end', upper(target.first_occurrence), 'period', target.period,
+                'timezone', target.timezone, 'active', target.active);
+    END CASE;
+    INSERT INTO cars.fleet_log (entry) VALUES (entry);
+    RETURN NULL;
+END
+$$;
+
+CREATE TRIGGER cars_fleet_log_cars AFTER INSERT OR UPDATE OR DELETE ON cars.cars FOR EACH ROW EXECUTE FUNCTION cars.log_fleet_change();
+CREATE TRIGGER cars_fleet_log_reservations AFTER INSERT OR UPDATE OR DELETE ON cars.reservations FOR EACH ROW EXECUTE FUNCTION cars.log_fleet_change();
+CREATE TRIGGER cars_fleet_log_recurrences AFTER INSERT OR UPDATE OR DELETE ON cars.recurrences FOR EACH ROW EXECUTE FUNCTION cars.log_fleet_change();
+
 ALTER TABLE ONLY "cars"."identities" ADD CONSTRAINT "cars_identities_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "cars"."users" ("id") ON UPDATE NO ACTION ON DELETE CASCADE;
 ALTER TABLE ONLY "cars"."sessions" ADD CONSTRAINT "cars_sessions_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "cars"."users" ("id") ON UPDATE NO ACTION ON DELETE CASCADE;
 ALTER TABLE ONLY "cars"."cars" ADD CONSTRAINT "cars_cars_owner_id_fkey" FOREIGN KEY ("owner_id") REFERENCES "cars"."users" ("id") ON UPDATE NO ACTION ON DELETE CASCADE;
@@ -181,3 +228,6 @@ COMMENT ON COLUMN "cars"."recurrences"."period" IS 'weekly, monthly, or yearly.'
 COMMENT ON COLUMN "cars"."recurrences"."timezone" IS 'IANA zone name the schedule is anchored to, so occurrences keep their wall-clock time across DST.';
 COMMENT ON COLUMN "cars"."recurrences"."active" IS 'False means the owner cancelled the schedule.';
 COMMENT ON COLUMN "cars"."recurrences"."created_at" IS 'When the schedule was created.';
+
+COMMENT ON TABLE "cars"."fleet_log" IS 'Ordered change feed for the in-memory search fleet. Written by triggers in the same transaction as each cars, reservations, or recurrences change, so it is exactly as durable as the data. Pods pull by seq and prune rows older than a day.';
+COMMENT ON COLUMN "cars"."fleet_log"."entry" IS 'Self-contained JSON snapshot of the changed row, shaped by cars.log_fleet_change(). Readers never join back to the source tables.';
