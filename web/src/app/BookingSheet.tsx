@@ -77,6 +77,10 @@ export function BookingSheet({ car, from, durationMinutes, me, onClose, onBooked
             {money(car.trip_price)}
           </Plate>
           <div className="min-w-0">
+            <p className="truncate text-sm font-extrabold">
+              {car.model || 'Car'}
+              {car.model_year ? <span className="font-medium text-paper-600"> · {car.model_year}</span> : null}
+            </p>
             <p className="text-sm font-bold">{formatWindow(from.toISOString(), end.toISOString())}</p>
             <p className="text-xs text-paper-600">
               {money(car.price_per_hour)} per hour · price locked when you book

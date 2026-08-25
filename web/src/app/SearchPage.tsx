@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { api, type AvailableCar, type Me } from './api';
-import { distance, money, toLocalInput } from './format';
+import { CarArt } from './CarArt';
+import { DatePicker } from './DatePicker';
+import { distance, money } from './format';
 import { MapView } from './MapView';
 import { Plate, useToast } from './ui';
 import { BookingSheet } from './BookingSheet';
@@ -27,13 +29,11 @@ function defaultStart(): Date {
 /** Search screen: when + how long on top, plate-marked map beside the result
  * list, booking sheet over it all once a car is picked. */
 export function SearchPage({ me }: { readonly me: Me | null | 'loading' }) {
-  const [fromInput, setFromInput] = useState(() => toLocalInput(defaultStart()));
+  const [from, setFrom] = useState<Date>(defaultStart);
   const [durationMinutes, setDurationMinutes] = useState<number>(120);
   const [cars, setCars] = useState<readonly AvailableCar[] | 'loading'>('loading');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const { toast, show } = useToast();
-
-  const from = useMemo(() => new Date(fromInput), [fromInput]);
 
   const search = useCallback(() => {
     setCars('loading');
@@ -59,15 +59,7 @@ export function SearchPage({ me }: { readonly me: Me | null | 'loading' }) {
           by the hour.
         </h1>
         <div className="flex flex-wrap items-end gap-3">
-          <label className="block">
-            <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-paper-600">Pick up</span>
-            <input
-              type="datetime-local"
-              value={fromInput}
-              onChange={(event) => setFromInput(event.target.value)}
-              className="rounded-lg border border-paper-300 bg-paper-50 px-3 py-2 text-sm font-semibold tabular-nums"
-            />
-          </label>
+          <DatePicker label="Pick up" value={from} onChange={setFrom} />
           <label className="block">
             <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-paper-600">For</span>
             <select
@@ -103,14 +95,19 @@ export function SearchPage({ me }: { readonly me: Me | null | 'loading' }) {
                     }`}
                     style={{ animationDelay: `${Math.min(index, 12) * 25}ms` }}
                   >
-                    <Plate tone={selectedId === car.id ? 'pine' : 'ink'} className="text-lg">
+                    <CarArt carId={car.id} className="w-16 shrink-0" />
+                    <span className="flex min-w-0 flex-col">
+                      <span className="truncate text-sm font-bold">
+                        {car.model || 'Car'}
+                        {car.model_year ? <span className="font-medium text-paper-600"> · {car.model_year}</span> : null}
+                      </span>
+                      <span className="text-xs text-paper-600">
+                        {money(car.price_per_hour)}/h · {distance(car.distance_meters)} away
+                      </span>
+                    </span>
+                    <Plate tone={selectedId === car.id ? 'pine' : 'ink'} className="ml-auto text-lg">
                       {money(car.trip_price)}
                     </Plate>
-                    <span className="flex flex-col">
-                      <span className="text-sm font-semibold">{money(car.price_per_hour)} per hour</span>
-                      <span className="text-xs text-paper-600">{distance(car.distance_meters)} away</span>
-                    </span>
-                    <span className="ml-auto text-sm font-semibold text-pine-700">Book →</span>
                   </button>
                 </li>
               ))}

@@ -11,6 +11,8 @@ export type Me = {
 export type Car = {
   readonly id: string;
   readonly owner_id: string;
+  readonly model: string;
+  readonly model_year?: number;
   readonly lat: number;
   readonly lng: number;
   readonly price_per_hour: number;
@@ -98,7 +100,7 @@ export const api = {
   myReservations: () => request<{ reservations: Reservation[] }>('/v1/me/reservations'),
 
   myCars: () => request<{ cars: Car[] }>('/v1/me/cars'),
-  createCar: (body: { lat: number; lng: number; price_per_hour: number }) =>
+  createCar: (body: { lat: number; lng: number; price_per_hour: number; model: string; model_year?: number }) =>
     request<Car>('/v1/cars', { method: 'POST', body: JSON.stringify(body) }),
   updateCar: (id: string, body: Partial<{ lat: number; lng: number; price_per_hour: number; is_listed: boolean }>) =>
     request<Car>(`/v1/cars/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
