@@ -147,6 +147,10 @@ Then point `DATABASE_URL` at the restored database and roll the pods. Practice q
 
 Measured, not estimated: [BENCHMARKS.md](BENCHMARKS.md) runs the store at 1k, 100k, 1M, and 10M cars. Short version: booking throughput is flat (~4-5,000/s on one Postgres, p50 ~7ms) no matter the fleet size because the write path is per-car index work, a single contended car serializes at ~1,200 bookings/s on its advisory lock, and search cost tracks car density in the radius, not fleet size. The write-contention war story in there (exclusion-constraint pile-ups deadlock by design, fixed with a per-car advisory lock) is worth the read.
 
+## Change data capture
+
+Every state transition here is a single-row write: booking is one `INSERT`, confirming a hold is one one-column `UPDATE`, cancelling is one one-column `UPDATE`. There is no saga and no outbox table, because there is nothing to keep consistent across tables, the row *is* the state machine. That makes `cars.reservations` an unusually clean logical-replication source: set `wal_level = logical`, point any CDC pipeline at Postgres, and you get a correct, ordered booking event stream for analytics, notifications, or search indexing with zero application changes. Two notes for whoever wires it: consumers that want old values on updates need one line, `ALTER TABLE cars.reservations REPLICA IDENTITY FULL`, and the seeded-hold delete inside `OrderCar` means expired holds emit deletes, which downstream should treat as releases, not cancellations.
+
 ## What changes at real scale
 
 Honest answers for the "what if it is 100M cars and 30k qps" question, none of which this deployment needs yet:

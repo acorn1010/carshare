@@ -28,6 +28,10 @@ DATABASE_URL=postgres://postgres:carshare@127.0.0.1:5434/carshare?sslmode=disabl
 
 **Search cost is density, not fleet size.** Availability tracks how many cars sit inside the radius, roughly 100 candidates per search at 1k cars and ~109,000 at 10M (a 2km radius over 8,600 cars/km², about 25x Manhattan's taxi density). Same fleet with a 500m radius is 10x faster. The levers, in the order a real product would pull them: shrink the radius as density grows (users in dense cities do not need a 2km circle), cache search results for a few seconds (bookings shift availability slowly at any given minute), and shard by city when a single metro genuinely holds millions of cars.
 
+## How big is a real city, anyway
+
+For calibration against the real world: New York, the densest for-hire market on earth, runs 13,587 yellow medallions plus roughly 130,000 total TLC-licensed vehicles. Turo's entire fleet across every market it operates in was about 340,000 active vehicles at the end of 2024. So a mega-successful car-share's largest single city is realistically 50,000 to 150,000 cars, with "half of every registered car in NYC" (~1M) as the absurd theoretical ceiling. Read the table with that in mind: the 100k row, 2,600 searches/s at p50 11ms with no cache, *is* the mega-success case on one Postgres. The 10M row is a stress test roughly 100x past anything that exists.
+
 ## The contention war story
 
 The first run of the contended scenario produced 4 qps, 20-second p50 latencies, and `deadlock detected` errors. Not a bug in the constraint, a property of it: exclusion constraints check conflicts by inserting first and scanning second, so two concurrent same-window inserts each find the other's uncommitted row, each waits for the other's transaction, and Postgres has to break the cycle with a 40P01. Under a sustained pile-up the losers form a long wait chain.
