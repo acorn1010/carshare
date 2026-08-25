@@ -1,0 +1,7 @@
+bin/
+db/.psqldef
+*.env
+.terraform/
+.terraform.lock.hcl
+terraform.tfstate*
+*.tfvars
