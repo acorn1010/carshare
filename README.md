@@ -4,13 +4,27 @@ A car-sharing marketplace. Owners list their cars, renters find and book them by
 
 **Live demo: [cars.foony.com](https://cars.foony.com)** — open it in two tabs and race for the same car. One tab books, the other gets JUST TAKEN. That race is the whole design in one interaction.
 
-**Ninety seconds, in reading order:** race the two tabs, then read [the one constraint](db/schema.sql) that makes the loser inevitable (`cars_reservations_no_overlap`), then the two war stories in [BENCHMARKS.md](BENCHMARKS.md) — write contention taken from 4 to ~1,200 bookings/s, and search from 462ms to 8.7ms by letting the index stream.
+**Ninety seconds, in reading order:** race the two tabs, then read [the one constraint](db/schema.sql) that makes the loser inevitable (`cars_reservations_no_overlap`), then the war stories in [BENCHMARKS.md](BENCHMARKS.md) — write contention taken from 4 to ~1,200 bookings/s, search from 462ms to 8.7ms by letting the index stream, and then search leaving the database entirely for an in-memory replica.
 
 - **API**: Go stdlib HTTP, Google OAuth sign-in, JSON everywhere
 - **Storage**: a single Postgres with the entire booking-correctness story in the schema
-- **Measured**: search runs at ~44,000 requests/s on a busy area (2,200/s worst case with the cache defeated) and bookings at ~4,000/s, one API pod, one Postgres
+- **Measured**: search runs at ~6-13,000 requests/s per pod at any traffic pattern, served from an in-memory replica so Postgres does no search work at all, and bookings at ~4,000/s on one Postgres
 - **Deploys**: container image on every push, Terraform for Cloudflare and Kubernetes
 - **Operations**: Prometheus metrics, alert rules in the repo, nightly dumps to R2, a restore drill that has actually been run
+
+## How search scales: replicate reads, serialize writes
+
+A rental marketplace is brutally read-heavy. A renter searches dozens of times per booking, bots and map drags add more, and the write rate is bounded by physical reality: a fleet's cars can only be picked up so many times a day. So the two sides get opposite treatments.
+
+**Writes stay on one Postgres and never scale out**, because they do not need to: ~4,000 bookings/s on one box is ~350M bookings a day, and the exclusion constraint that makes double-booking impossible only works when there is exactly one place every reservation must land.
+
+**Reads leave the database entirely.** Every change to a car, reservation, or schedule is captured in the same transaction into an append-only change log (`cars.fleet_log`). Each API pod tails that log into an in-memory copy of the whole fleet ([internal/fleet](internal/fleet), ~500MB for 400k cars, ~3s to load) and answers every search from RAM, exact and ~250ms fresh. The database serves the change stream, whose rate is the booking rate, not the search rate.
+
+That split makes search capacity a horizontal knob: pods share nothing on the read path, so the autoscaler multiplies the ~6-13,000 searches/s each pod measures by however many pods traffic demands, and Postgres never notices. A million users searching cost the database the same as ten.
+
+The change log is deliberately the simple version of this idea: a trigger writes one extra row inside each transaction, and pods poll it. The grown-up version reads the WAL instead, logical replication into a CDC agent (like [Database Sync](https://foony.io/docs/database-sync)) publishing to a broker like NATS that fans out to every pod. That removes the trigger's per-transaction write and the log table entirely, capture becomes free because Postgres already wrote the WAL, and fan-out stops costing one database poller per pod. The search code would not change: the fleet applies self-contained change entries and is indifferent to who delivers them, so a broker subscription slots in where the poller sits.
+
+Stale reads are safe by construction: search only proposes, the constraint disposes. The worst a 250ms-old answer can do is offer a car that was just taken, and booking it returns the same JUST TAKEN conflict the two-tab race demonstrates.
 
 ## Quickstart
 
@@ -25,13 +39,13 @@ Sign-in needs Google OAuth credentials (`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRE
 
 ## Architecture
 
-![How a booking flows: two racing tabs, the Worker, the Go API with its search cache and per-car lock, and Postgres where one exclusion constraint decides the winner](docs/architecture.svg)
+![How a booking flows: two racing tabs, the Worker, the Go API with its in-memory fleet and per-car lock, and Postgres where one exclusion constraint decides the winner](docs/architecture.svg)
 
 The frontend ([web/](web/)) is Astro + React + Tailwind on a Cloudflare Worker. The Worker serves static assets from the edge and passes `/v1/*` through to the API, so the browser sees a single origin: the session cookie stays first-party and no CORS exists anywhere. Frontend deploys are a `wrangler deploy`, fully decoupled from backend rolls.
 
 The API pods are stateless. All booking correctness lives in Postgres, so pods never coordinate with each other and you can add, kill, or roll them freely. At realistic scale, a million cars and tens of millions of reservations a year, one well-kept Postgres is nowhere near its limits.
 
-Search pages are cached in each pod for 30 seconds, snapped to a ~550m cell and a 15-minute window so nearby searchers share one database query ([the numbers](BENCHMARKS.md)). The deliberate trade: a car booked seconds ago can stay in search results for up to 30 seconds. Booking it returns the same JUST TAKEN conflict as the two-tab race, so the cache never touches correctness, only freshness.
+Search never queries Postgres: each pod answers from its in-memory fleet, loaded from one snapshot at boot and kept current by tailing the change log ("How search scales" above has the full story, [BENCHMARKS.md](BENCHMARKS.md) the numbers). A car booked in one tab vanishes from the other's next search a quarter-second later.
 
 ## API
 
@@ -47,7 +61,7 @@ All routes are JSON under `/v1`. Authentication is a session cookie set by Googl
 | `PATCH /v1/cars/{id}` | owner edits price, location, or `is_listed` |
 | `GET /v1/cars/{id}` | car details, used to quote a price before booking |
 | `GET /v1/cars/{id}/calendar?from&to` | owner's view: bookings plus recurring holds |
-| `GET /v1/availability?lat&lng&from&duration_minutes&range_meters&sort&page` | cars free for the whole window, closest first by default, `sort=price` for cheapest trip first. 100 per page, 1,000 results max, pages cached ~30s |
+| `GET /v1/availability?lat&lng&from&duration_minutes&range_meters&sort&page` | cars free for the whole window, closest first by default, `sort=price` for cheapest trip first. 100 per page, 1,000 results max, answered from the in-memory fleet |
 | `POST /v1/reservations` | book: `car_id`, `price` (the trip price you saw), `from`, `duration_minutes`, `kind` (`rental`, `rental_hold`, `owner`), optional `idempotency_key` |
 | `POST /v1/reservations/{id}/confirm` | turn a hold into a rental |
 | `DELETE /v1/reservations/{id}` | cancel: free up to 24h before start, or within 1h of booking (holds cancel any time) |
@@ -143,7 +157,7 @@ Then point `DATABASE_URL` at the restored database and roll the pods. Practice q
 
 ## Benchmarks
 
-Measured, not estimated: [BENCHMARKS.md](BENCHMARKS.md) runs the store at 1k, 100k, 1M, and 10M cars. Booking throughput is flat (~4-5,000/s on one Postgres, p50 ~7ms) no matter the fleet size, because the write path is per-car index work. A single contended car serializes at ~1,200 bookings/s on its advisory lock. Search started at 52/s and ends at **~44,100 requests/s** through the real HTTP binary: closest-first streaming from the location index (8.7ms for one uncached dense-city query), plus a 30-second snapped cache that bounds database load by busy map cells instead of user traffic. The two war stories in there, the write-contention deadlocks and the query-planner fight, are the best part of this repo.
+Measured, not estimated: [BENCHMARKS.md](BENCHMARKS.md) runs the store at 1k, 100k, and 1M cars. Booking throughput is flat (~4-5,000/s on one Postgres, p50 ~7ms) no matter the fleet size, because the write path is per-car index work. A single contended car serializes at ~1,200 bookings/s on its advisory lock. Search started at 52/s against Postgres and ends served from an in-memory replica fed by a transactional change log: ~6-13,000 requests/s per pod whatever the traffic pattern, worst case included, with the database doing zero search work. The three war stories in there, the write-contention deadlocks, the query-planner fight, and the read model that ended it, are the best part of this repo.
 
 ## Change data capture
 
