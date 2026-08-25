@@ -79,6 +79,7 @@ func (server *Server) Routes() http.Handler {
 	handle("POST /v1/reservations/{id}/confirm", server.requireUser(server.handleConfirmHold))
 	handle("DELETE /v1/reservations/{id}", server.requireUser(server.handleCancelReservation))
 	handle("GET /v1/me/reservations", server.requireUser(server.handleMyReservations))
+	handle("GET /v1/me/cars", server.requireUser(server.handleMyCars))
 	handle("POST /v1/schedules", server.requireUser(server.handleCreateSchedule))
 	handle("DELETE /v1/schedules/{id}", server.requireUser(server.handleDeleteSchedule))
 

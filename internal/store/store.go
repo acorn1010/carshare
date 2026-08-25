@@ -222,6 +222,7 @@ type DataStore interface {
 	CreateCar(ctx context.Context, ownerID string, lat, lng float64, pricePerHour int) (Car, error)
 	UpdateCar(ctx context.Context, ownerID, carID string, patch CarPatch) (Car, error)
 	GetCar(ctx context.Context, carID string) (Car, error)
+	CarsByOwner(ctx context.Context, ownerID string) ([]Car, error)
 
 	Availability(ctx context.Context, params AvailabilityParams) ([]AvailableCar, error)
 	OrderCar(ctx context.Context, params OrderParams) (Reservation, error)
@@ -408,6 +409,32 @@ func (store *Store) GetCar(ctx context.Context, carID string) (Car, error) {
 		return Car{}, fmt.Errorf("store: get car: %w", err)
 	}
 	return car, nil
+}
+
+// CarsByOwner lists everything a host has listed, hidden cars included.
+func (store *Store) CarsByOwner(ctx context.Context, ownerID string) ([]Car, error) {
+	rows, err := store.pool.Query(ctx, `
+		SELECT id, owner_id, location[1], location[0], price_per_hour, is_listed, created_at, updated_at
+		FROM cars.cars
+		WHERE owner_id = $1
+		ORDER BY created_at
+		LIMIT 200`, ownerID)
+	if err != nil {
+		return nil, fmt.Errorf("store: cars by owner: %w", err)
+	}
+	defer rows.Close()
+	var cars []Car
+	for rows.Next() {
+		car, err := scanCar(rows)
+		if err != nil {
+			return nil, fmt.Errorf("store: cars by owner scan: %w", err)
+		}
+		cars = append(cars, car)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: cars by owner rows: %w", err)
+	}
+	return cars, nil
 }
 
 // distanceMetersSQL approximates meters from degree deltas, scaling longitude

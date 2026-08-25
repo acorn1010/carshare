@@ -126,6 +126,19 @@ func (memory *Store) UpdateCar(_ context.Context, ownerID, carID string, patch s
 	return car, nil
 }
 
+func (memory *Store) CarsByOwner(_ context.Context, ownerID string) ([]store.Car, error) {
+	memory.mutex.Lock()
+	defer memory.mutex.Unlock()
+	var cars []store.Car
+	for _, car := range memory.cars {
+		if car.OwnerID == ownerID {
+			cars = append(cars, car)
+		}
+	}
+	sort.Slice(cars, func(i, j int) bool { return cars[i].CreatedAt.Before(cars[j].CreatedAt) })
+	return cars, nil
+}
+
 func (memory *Store) GetCar(_ context.Context, carID string) (store.Car, error) {
 	memory.mutex.Lock()
 	defer memory.mutex.Unlock()

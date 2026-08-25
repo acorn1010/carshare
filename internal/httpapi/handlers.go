@@ -278,6 +278,20 @@ func (server *Server) handleCancelReservation(writer http.ResponseWriter, reques
 	writer.WriteHeader(http.StatusNoContent)
 }
 
+// handleMyCars lists the caller's listed cars, hidden ones included.
+func (server *Server) handleMyCars(writer http.ResponseWriter, request *http.Request) {
+	cars, err := server.params.Store.CarsByOwner(request.Context(), currentUser(request).ID)
+	if err != nil {
+		writeStoreError(writer, err)
+		return
+	}
+	items := make([]carResponse, 0, len(cars))
+	for _, car := range cars {
+		items = append(items, toCarResponse(car))
+	}
+	writeJSON(writer, http.StatusOK, map[string]any{"cars": items})
+}
+
 // handleMyReservations lists the caller's bookings, upcoming first.
 func (server *Server) handleMyReservations(writer http.ResponseWriter, request *http.Request) {
 	reservations, err := server.params.Store.MyReservations(request.Context(), currentUser(request).ID)
