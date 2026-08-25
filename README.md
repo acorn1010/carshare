@@ -4,10 +4,13 @@ A car-sharing marketplace. Owners list their cars, renters find and book them by
 
 **Live demo: [cars.foony.com](https://cars.foony.com)** — open it in two tabs and race for the same car. One tab books, the other gets JUST TAKEN, and that is the whole design in one interaction. The exhibit is the reservation engine underneath; the site is its shop window.
 
+**Ninety seconds, in reading order:** race the two tabs, then read [the one constraint](db/schema.sql) that makes the loser inevitable (`cars_reservations_no_overlap`), then the two war stories in [BENCHMARKS.md](BENCHMARKS.md) — write contention taken from 4 to ~1,200 bookings/s, and search from 462ms to 8.7ms by letting the index stream. Everything below is commentary on those three things.
+
 - **API**: Go stdlib HTTP, Google OAuth sign-in, JSON everywhere
 - **Storage**: a single Postgres with the entire booking-correctness story in the schema
+- **Measured**: ~2,800 searches/s and ~4,000 bookings/s on one box, uncached, before the search cache makes read load stop scaling with users at all
 - **Deploys**: container image on every push, Terraform for Cloudflare and Kubernetes
-- **Operations**: Prometheus metrics, alert rules in the repo, nightly dumps to R2
+- **Operations**: Prometheus metrics, alert rules in the repo, nightly dumps to R2, a restore drill that has actually been run
 
 ## Quickstart
 
@@ -113,6 +116,7 @@ Everything is Prometheus, prefix `carshare_`:
 - `carshare_bookings_total{kind,outcome}`: business health. A spike in `conflict` is contention, a spike in `price_changed` is repricing churn, a drop in `confirmed` is revenue
 - `carshare_holds_expired_total`: how often people abandon checkout
 - `carshare_db_pool_*`: pool saturation before it becomes latency
+- `carshare_search_cache_total{result}`: whether the cache earns its keep, hit rate should climb with traffic
 - `carshare_errors_total{component,kind}`: internal failures, labeled by the broken part
 - `carshare_double_booked_pairs`: **the invariant gauge**. A background loop counts overlapping confirmed pairs among current and future reservations (past rows are immutable history, rescanning them can never change the answer). The constraint alone guarantees correctness, this gauge exists to catch operational accidents the constraint cannot survive, a migration dropping it or a bad restore, and its alert is severity critical with `for: 0m`
 
@@ -145,9 +149,11 @@ Then point `DATABASE_URL` at the restored database and roll the pods. Practice q
 2. `terraform apply` in [terraform/](terraform/) with your variables: Cloudflare DNS and health check for `cars.foony.com`, namespace, secrets, deployment, service, ingress, HPA, PDB, alert rules, and the backup CronJob. Secrets are variables with no defaults, nothing sensitive lives in the repo.
 3. Schema changes: edit `db/schema.sql` to the desired end state, `./db/update_schema.sh` to read the diff, `--apply` to apply, then roll the pods (drivers cache prepared statements per connection).
 
+**Why not GitOps here.** At fleet scale the image-tag write moves into a git repo and Argo CD reconciles it with auto-sync and self-heal; that is the right ladder rung when many services and environments need continuous convergence. For one service the machinery costs more than it saves, and the manual `terraform apply` buys something concrete for an open-source repo: **CI never holds a cluster credential**. GitHub Actions here can build and publish images but cannot touch Kubernetes, which is exactly the property Argo's pull model exists to provide, achieved at this scale by simply not automating the last step.
+
 ## Benchmarks
 
-Measured, not estimated: [BENCHMARKS.md](BENCHMARKS.md) runs the store at 1k, 100k, 1M, and 10M cars. Short version: booking throughput is flat (~4-5,000/s on one Postgres, p50 ~7ms) no matter the fleet size because the write path is per-car index work, a single contended car serializes at ~1,200 bookings/s on its advisory lock, and search cost tracks car density in the radius, not fleet size. The write-contention war story in there (exclusion-constraint pile-ups deadlock by design, fixed with a per-car advisory lock) is worth the read.
+Measured, not estimated: [BENCHMARKS.md](BENCHMARKS.md) runs the store at 1k, 100k, 1M, and 10M cars. Short version: booking throughput is flat (~4-5,000/s on one Postgres, p50 ~7ms) no matter the fleet size because the write path is per-car index work, and a single contended car serializes at ~1,200 bookings/s on its advisory lock. Search is its own story: closest-first streams from the location index and holds **~2,760 searches/s at p50 8.7ms** on a 400k-car fleet with 26,000 cars in the circle, where rank-everything-by-price manages 52/s, and the 30-second snapped cache on top bounds database load by busy map cells instead of user traffic. The two war stories in there, the write-contention deadlocks and the query-planner fight that search win required, are the best fifteen minutes in this repo.
 
 ## Change data capture
 
@@ -155,9 +161,9 @@ Every state transition here is a single-row write: booking is one `INSERT`, conf
 
 ## What changes at real scale
 
-Honest answers for the "what if it is 100M cars and 30k qps" question, none of which this deployment needs yet:
+Honest answers for the "what if it is 100M cars and 30k qps" question:
 
-- **Reads first.** Availability search is the hot path and is trivially cacheable for seconds. A short-TTL cache in front of search absorbs most of 30k qps before Postgres notices.
+- **Reads first.** Already built: the [30-second snapped cache](internal/httpapi/searchcache.go) means search load is bounded by distinct busy cells per 30 seconds, not by users. 30k qps of searchers concentrated on a hundred hot neighborhoods is a few hundred database queries a minute.
 - **Partition by city.** Cars never move between cities mid-search, so city id is a natural shard key for cars and reservations. Each shard is this exact system, small.
 - **The constraint scales with you.** The exclusion check is an index lookup on (car, time), it does not care how many other cars exist. Booking write volume per car is human-scale by definition.
 - **Global serving** is cities pinned to regional databases with anycast routing to the nearest region, not one worldwide database.
