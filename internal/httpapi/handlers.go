@@ -25,6 +25,9 @@ const (
 	// have no such product limit, but search windows feed cache keys, so
 	// unbounded dates would let anyone mint unlimited keys.
 	searchFromHorizon = 365 * 24 * time.Hour
+	// maxPricePerHourCents caps the hourly rate at $500. Exotics on Turo top
+	// out near $150/hour, so anything above this is a typo like 1200 for $12.
+	maxPricePerHourCents = 500_00
 )
 
 // carResponse is the public JSON shape of a car.
@@ -93,6 +96,9 @@ func (server *Server) handleCreateCar(writer http.ResponseWriter, request *http.
 	case !validCoordinates(body.Lat, body.Lng) || body.PricePerHour < 0:
 		writeError(writer, http.StatusBadRequest, "bad_request", "lat/lng out of range or negative price")
 		return
+	case body.PricePerHour > maxPricePerHourCents:
+		writeError(writer, http.StatusBadRequest, "bad_request", "price_per_hour is above the $500/hour cap")
+		return
 	case len(body.Model) > 80:
 		writeError(writer, http.StatusBadRequest, "bad_request", "model is too long")
 		return
@@ -158,8 +164,8 @@ func (server *Server) handleUpdateCar(writer http.ResponseWriter, request *http.
 		writeError(writer, http.StatusBadRequest, "bad_request", "lat/lng out of range")
 		return
 	}
-	if body.PricePerHour != nil && *body.PricePerHour < 0 {
-		writeError(writer, http.StatusBadRequest, "bad_request", "negative price")
+	if body.PricePerHour != nil && (*body.PricePerHour < 0 || *body.PricePerHour > maxPricePerHourCents) {
+		writeError(writer, http.StatusBadRequest, "bad_request", "price_per_hour must be between 0 and the $500/hour cap")
 		return
 	}
 	car, err := server.params.Store.UpdateCar(request.Context(), currentUser(request).ID, request.PathValue("id"),

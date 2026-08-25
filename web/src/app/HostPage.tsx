@@ -8,6 +8,24 @@ import { Button, Chip, Plate, useToast } from './ui';
 
 const CITY_CENTER: readonly [number, number] = [37.77, -122.4];
 
+// Mirror the server's bounds so the form rejects the same values the API does.
+const MIN_MODEL_YEAR = 1900;
+const MAX_MODEL_YEAR = new Date().getFullYear() + 1;
+const MAX_DOLLARS_PER_HOUR = 500;
+
+function isValidRate(dollars: string): boolean {
+  return Number(dollars) > 0 && Number(dollars) <= MAX_DOLLARS_PER_HOUR;
+}
+
+// Snaps an out-of-range value into range when the input loses focus, so the
+// user sees the correction instead of a disabled button with no explanation.
+function clamp(value: string, min: number, max: number): string {
+  if (value === '') {
+    return '';
+  }
+  return String(Math.min(max, Math.max(min, Number(value))));
+}
+
 /** Host screen: list a car by dropping a pin, edit price, hide from search,
  * and manage the calendar with repeating holds. */
 export function HostPage({ me }: { readonly me: Me | null | 'loading' }) {
@@ -76,6 +94,10 @@ function AddCar({ onAdd }: {
   const [model, setModel] = useState('');
   const [year, setYear] = useState('');
 
+  // Year is optional, but a filled-in year must be plausible.
+  const isValidYear = year === ''
+    || (Number(year) >= MIN_MODEL_YEAR && Number(year) <= MAX_MODEL_YEAR);
+
   return (
     <section className="rounded-2xl border border-paper-200 bg-paper-50 p-4 shadow-card">
       <h2 className="pb-1 text-lg font-extrabold">List a car</h2>
@@ -97,8 +119,11 @@ function AddCar({ onAdd }: {
           <input
             type="number"
             placeholder="2021"
+            min={MIN_MODEL_YEAR}
+            max={MAX_MODEL_YEAR}
             value={year}
             onChange={(event) => setYear(event.target.value)}
+            onBlur={() => setYear(clamp(year, MIN_MODEL_YEAR, MAX_MODEL_YEAR))}
             className="w-20 rounded-lg border border-paper-300 bg-paper-50 px-3 py-2 text-sm font-semibold tabular-nums"
           />
         </label>
@@ -107,17 +132,19 @@ function AddCar({ onAdd }: {
           <input
             type="number"
             min="1"
+            max={MAX_DOLLARS_PER_HOUR}
             step="1"
             value={dollarsPerHour}
             onChange={(event) => setDollarsPerHour(event.target.value)}
+            onBlur={() => setDollarsPerHour(clamp(dollarsPerHour, 1, MAX_DOLLARS_PER_HOUR))}
             className="w-24 rounded-lg border border-paper-300 bg-paper-50 px-3 py-2 text-sm font-semibold tabular-nums"
           />
         </label>
         <Button
-          disabled={!pin || !(Number(dollarsPerHour) > 0) || model.trim() === ''}
+          disabled={!pin || !isValidRate(dollarsPerHour) || model.trim() === '' || !isValidYear}
           onClick={() =>
             pin && onAdd(pin[0], pin[1], Math.round(Number(dollarsPerHour) * 100), model.trim(),
-              Number(year) > 1900 ? Number(year) : undefined)
+              year === '' ? undefined : Number(year))
           }
         >
           List it
@@ -188,15 +215,17 @@ function CarCard({ car, onChange, onFail, onDone }: {
               <input
                 type="number"
                 min="1"
+                max={MAX_DOLLARS_PER_HOUR}
                 step="1"
                 value={dollars}
                 onChange={(event) => setDollars(event.target.value)}
+                onBlur={() => setDollars(clamp(dollars, 1, MAX_DOLLARS_PER_HOUR))}
                 className="w-24 rounded-lg border border-paper-300 bg-paper-50 px-3 py-2 text-sm font-semibold tabular-nums"
               />
             </label>
             <Button
               tone="ghost"
-              disabled={!(Number(dollars) > 0)}
+              disabled={!isValidRate(dollars)}
               onClick={() =>
                 api
                   .updateCar(car.id, { price_per_hour: Math.round(Number(dollars) * 100) })
