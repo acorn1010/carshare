@@ -181,7 +181,10 @@ func seed(ctx context.Context, pool *pgxpool.Pool, target int) {
 		CROSS JOIN LATERAL (SELECT now() + (random() * 720)::int * interval '1 hour' AS s) t`,
 		booker)
 	must(err)
-	_, err = pool.Exec(ctx, `ANALYZE cars.cars, cars.reservations`)
+	// Every table availability reads. An unanalyzed one leaves the planner
+	// guessing its size, which is enough to swap a hash anti-join for a nested
+	// loop and make the numbers below measure the wrong plan.
+	_, err = pool.Exec(ctx, `ANALYZE cars.cars, cars.reservations, cars.recurrences`)
 	must(err)
 }
 
