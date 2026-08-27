@@ -11,6 +11,13 @@ export type MapCar = {
   readonly selected?: boolean;
 };
 
+/**
+ * Required for fair, non-commercial use. Allows up to 5M requests / month. If we need more than
+ * that, can always host the maps with our own OSM service or something.
+ * See: https://carto.com/basemaps/apikey/
+ */
+const CARTO_CDN_KEY = 'cb1_29ij_1_6eb87ea2754516a5035c7fa9';
+
 /** Leaflet map with license-plate price markers. Also doubles as a location
  * picker for hosts when onPick is set. */
 export function MapView({ cars, center, zoom = 13, onSelect, onPick, onMoved, pin, className = '' }: {
@@ -42,7 +49,7 @@ export function MapView({ cars, center, zoom = 13, onSelect, onPick, onMoved, pi
     }
     const created = L.map(container.current, { zoomControl: true, attributionControl: true });
     created.setView([center[0], center[1]], zoom);
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+    L.tileLayer(`https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png?key=${CARTO_CDN_KEY}`, {
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
       maxZoom: 19,
     }).addTo(created);
